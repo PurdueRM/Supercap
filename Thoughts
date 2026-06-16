@@ -1,0 +1,19 @@
+DO not update .ioc file until all code in those functions is verified to be correct
+(I think some code was modified in those functions that will not be saved)
+
+3 modes:
+	charging: requested power < power limit
+	discharging: requested power > power limit
+	doing nothing: command from CAN to turn off or requested power ~= power limit within some tolerance)
+
+Defined variables for:
+	switching to charging (as a percentage of requested power / power limit)
+	switching to discharging (as a percentage of requested power / power limit)
+	rate of charging (if requested > limit by 1w, how much to discharge as w) (default is 1w) (probably don't modify, but might as well as)
+	rate of discharging......
+	
+How to estimate stored energy? (could be useful to display to user)
+
+Can power (or current) going into or out of supercap be estimated by pwm duty cycle
+
+extra: could add a logging feature for estimated energy, power draw, supercap mode, pwm percent
