@@ -61,6 +61,11 @@ void Error_Handler(void);
 #define STM_32_Functional_GPIO_Port GPIOC
 
 /* USER CODE BEGIN Private defines */
+uint16_t adc1_buffer[2] = {0U, 0U}; //holds adc values for motor current and bus voltage
+// Index 0 = PC0 (IBUS)
+// Index 1 = PA2 (VCAP)
+// Index 2 = PA3 (ICAP)
+uint16_t adc2_buffer[3] = {0U, 0U, 0U};
 
 /* USER CODE END Private defines */
 

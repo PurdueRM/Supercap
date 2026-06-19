@@ -39,7 +39,7 @@ extern ADC_HandleTypeDef hadc2;
 /* USER CODE BEGIN Private defines */
 HAL_StatusTypeDef ADC2_Read_PC0_PA2_PA3(uint16_t *pc0_value, uint16_t *pa2_value, uint16_t *pa3_value);
 HAL_StatusTypeDef ADC1_Read_PA6_PC4(uint16_t *pa6_value, uint16_t *pc4_value);
-float	ADC_To_Voltage(uint32_t adc_value, float vref);
+float ADC_To_Voltage_Averaged(float adc_value, float vref);
 void GPIO_On();
 /* USER CODE END Private defines */
 

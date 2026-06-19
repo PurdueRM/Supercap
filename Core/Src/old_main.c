@@ -1,4 +1,4 @@
-/* USER CODE BEGIN Header */
+/* USER CODE BEGIN Header */ 
 /**
   ******************************************************************************
   * @file           : main.c
@@ -15,7 +15,6 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
-#include "config.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -41,6 +40,48 @@ typedef struct
 /* ---------------- GPIO / power stage ---------------- */
 #define CHARGER_ENABLE_PORT          GPIOB
 #define CHARGER_ENABLE_PIN           GPIO_PIN_11
+
+/* ---------------- PWM settings ---------------- */
+#define PWM_DUTY_PERMILLE_MIN        0U
+#define PWM_DUTY_PERMILLE_START      80U
+#define PWM_DUTY_PERMILLE_ABS_MAX    500U
+#define CHARGE_DUTY_PERMILLE_MAX     400U
+#define DISCHARGE_DUTY_PERMILLE_MAX  450U
+#define CHARGE_DUTY_STEP_UP          20U
+#define CHARGE_DUTY_STEP_DOWN        20U
+#define DISCHARGE_DUTY_STEP_UP       30U
+#define DISCHARGE_DUTY_STEP_DOWN     20U
+#define DUTY_STEP_FAST_DOWN           40U
+
+/* ---------------- Loop timing ---------------- */
+#define CONTROL_DELAY_MS             2U
+
+/* ---------------- ADC scaling ---------------- */
+#define BUS_SENSE_GAIN               10.0f
+#define CAP_SENSE_GAIN               10.0f
+#define ADC_ZERO_CLAMP_V             0.05f
+
+/* ---------------- INA240 current sense ---------------- */
+#define INA240_SHUNT_OHM             0.002f
+#define INA240_GAIN_V_PER_V          50.0f
+#define IMOTOR_ZERO_CURRENT_V        1.6987f
+#define IBAT_ZERO_CURRENT_V          1.7028f
+#define ICAP_ZERO_CURRENT_V          1.7042f
+
+/* ---------------- Filters ---------------- */
+#define CURRENT_FILTER_ALPHA         0.08f
+#define VOLTAGE_FILTER_ALPHA         0.05f
+#define PROTECTION_FILTER_ALPHA      0.25f
+#define IMOTOR_FILTER_ALPHA          0.01f
+#define IMOTOR_DEADBAND_A            0.30f
+#define IMOTOR_AVG_SAMPLES           8U
+
+/* ---------------- Power Sharing ---------------- */
+#define BATTERY_POWER_LIMIT_W        60.0f   // Hard battery power limit (W)
+#define MIN_BUS_VOLTAGE              1.0f    // Voltage floor to avoid divide-by-zero
+#define AUTO_CAP_ASSIST_MIN_V        16.0f  // Min cap voltage to assist
+
+#define DISCHARGE_CURRENT_HARD_A 5.5f
 
 /* USER CODE END PD */
 
@@ -107,7 +148,9 @@ void PowerStage_SetDutyPermille(uint32_t duty_permille);
 void PowerStage_Enable(uint8_t en);
 
 float INA240_VoltageToCurrent(float vout, float zero_v);
+float LPF_Apply(float prev, float input, float alpha);
 float ABSF(float x);
+float Read_Averaged_PA6_Voltage(uint8_t samples);
 
 uint32_t DutyPermilleToCompare(TIM_HandleTypeDef *htim, uint32_t duty_permille);
 
@@ -215,14 +258,63 @@ void PowerSharingControl(float vbus, float vcap, float ibat_raw, float icap_raw)
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
 
+float LPF_Apply(float prev, float input, float alpha)
+{
+    return prev + alpha * (input - prev);
+}
+
 float ABSF(float x)
 {
     return (x < 0.0f) ? -x : x;
 }
 
-float INA240_VoltageToCurrent(float voltage)
+float INA240_VoltageToCurrent(float vout, float zero_v)
 {
-    return voltage * CURRENT_SHUNT_SCALE;
+    return (vout - zero_v) / (INA240_GAIN_V_PER_V * INA240_SHUNT_OHM);
+}
+
+float Read_Averaged_PA6_Voltage(uint8_t samples)
+{
+    uint32_t sum = 0U;
+    uint16_t pa6_tmp = 0U;
+    uint16_t pc4_dummy = 0U;
+    uint8_t i;
+
+    if (samples == 0U)
+    {
+        samples = 1U;
+    }
+
+    for (i = 0U; i < samples; i++)
+    {
+        ADC1_Read_PA6_PC4(&pa6_tmp, &pc4_dummy);
+        sum += pa6_tmp;
+    }
+
+    return ADC_To_Voltage((uint16_t)(sum / samples), 3.3f);
+}
+
+uint32_t DutyPermilleToCompare(TIM_HandleTypeDef *htim, uint32_t duty_permille)
+{
+    uint32_t arr = __HAL_TIM_GET_AUTORELOAD(htim);
+
+    if (duty_permille > 1000U)
+    {
+        duty_permille = 1000U;
+    }
+
+    return ((arr + 1U) * duty_permille) / 1000U;
+}
+
+void PowerStage_SetDutyPermille(uint32_t duty_permille)
+{
+    uint32_t ccr1 = DutyPermilleToCompare(&htim1, duty_permille);
+    uint32_t ccr4 = DutyPermilleToCompare(&htim3, duty_permille);
+
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, ccr1);
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, ccr4);
+
+    pwm_duty_permille = duty_permille;
 }
 
 void PowerStage_Enable(uint8_t en)
@@ -257,110 +349,45 @@ void VOFA_SendData(void)
     HAL_UART_Transmit(&huart4, (uint8_t *)&g_vofa_frame, sizeof(g_vofa_frame), 1000);
 }
 
-
-float Process_Dynamic_Power_Tracking(float target_power, float actual_power)
+/* ===================== TRUE PARALLEL POWER-SHARING ===================== */
+void PowerSharingControl(float vbus, float vcap, float ibat_raw, float icap_raw)
 {
-    static float last_target_power = 0.0f;
-    //positive target power = charging
+    float ibat_abs = ABSF(ibat_raw);
+    float icap_abs = ABSF(icap_raw);
+    float pwm_command = (float)pwm_duty_permille;
 
-    // 1. Calculate the moving physical baseline
-    float equilibrium_ff = cap_voltage_raw / bus_voltage_raw;
-    float power_ff = 0.0f;
-    if (cap_voltage_raw > 1.0f) {
-            power_ff = (SYSTEM_R * target_power) / (cap_voltage_raw * bus_voltage_raw);
-    }
-
-    float combined_feed_forward = equilibrium_ff + power_ff;
-
-    // 2. Calculate actual power
-    float power_error = target_power - actual_power;
-
-    // If the mode changes, clear mem to prevent lag/overshoot
-    if ((target_power > 0.0f && last_target_power < 0.0f) ||
-        (target_power < 0.0f && last_target_power > 0.0f))
+    /* --- HARD BATTERY POWER LIMIT --- */
+    if (vbus > MIN_BUS_VOLTAGE)
     {
-        power_integral = 0.0f;
+        float ibat_max = BATTERY_POWER_LIMIT_W / vbus;
+
+        if (ibat_abs > ibat_max)
+        {
+            float reduction_factor = ibat_max / ibat_abs;
+            pwm_command = pwm_command * reduction_factor;
+
+            if (pwm_command < PWM_DUTY_PERMILLE_MIN)
+            {
+                pwm_command = PWM_DUTY_PERMILLE_MIN;
+            }
+        }
     }
-    last_target_power = target_power;
 
-    power_integral += power_error * KI_GAIN;
+    /* --- CAPACITOR ASSIST --- */
+    if ((ibat_abs > (BATTERY_POWER_LIMIT_W / vbus)) && (vcap >= AUTO_CAP_ASSIST_MIN_V))
+    {
+        float extra_duty = (ibat_abs - (BATTERY_POWER_LIMIT_W / vbus)) / (DISCHARGE_CURRENT_HARD_A) * DISCHARGE_DUTY_STEP_UP;
+        pwm_command += extra_duty;
 
-    // clamp integral term
-    if (power_integral > MAX_INTEGRAL_TERM)  power_integral = MAX_INTEGRAL_TERM;
-    if (power_integral < -MAX_INTEGRAL_TERM) power_integral = -MAX_INTEGRAL_TERM;
-
-    // 6. Compute final duty cycle
-    float final_duty = combined_feed_forward + (power_error * KP_GAIN) + power_integral;
-
-    //make sure charging always charges under the available power
-    //and make sure discharging always charges over the necessary extra power
-    if (target_power > 0.0f)
+        if (pwm_command > DISCHARGE_DUTY_PERMILLE_MAX)
         {
-            // --- CHARGING MODE ---
-            // Never exceed target_power
-            if (actual_power >= target_power && final_duty > combined_feed_forward)
-            {
-                final_duty = combined_feed_forward; // Force it back toward 0A charging
-                power_integral = 0.0f;          // Freeze integral windup
-            }
+            pwm_command = DISCHARGE_DUTY_PERMILLE_MAX;
         }
-    else if (target_power < 0.0f)
-        {
-            // --- DISCHARGING MODE ---
-            // Never discharge "more" than target_power
-            if (actual_power <= target_power && final_duty < combined_feed_forward)
-            {
-                final_duty = combined_feed_forward; // Force it back toward 0A discharging
-                power_integral = 0.0f;          // Freeze integral windup
-            }
-        }
+    }
 
-    return final_duty;
-}
-
-/* Decide what the supercap should do and the duty cycle to achieve that */
-void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage, float cap_current, float motor_current, float motor_voltage)
-{
-	float requested_power = motor_current * motor_voltage;
-	float battery_power = bat_voltage * bat_current;
-	float capacitor_energy = 0.5f * CAPACITANCE_TOTAL * cap_voltage * cap_voltage;
-	float capacitor_power = cap_voltage * cap_current;
-
-	//figure out mode
-	if(ref_system_indicates_off){
-		//off
-		PowerStage_Enable(0); //turns off charging and discharging
-		power_integral = 0.0f;
-	}
-	else{
-		//charging or discharging
-		float target_power = POWER_LIMIT - requested_power;
-
-		//safety limits
-		if ((capacitor_energy < MINIMUM_CAPACITOR_ENERGY) && (target_power < 0.0f)) {
-			target_power = 0.0f;
-		}
-		if ((cap_voltage > CAPACITOR_VOLTAGE_MAX) && (target_power > 0.0f)) {
-			target_power = 0.0f;
-		}
-		if((target_power > 0) && (target_power > MAX_CHARGE_CURRENT * cap_voltage)){
-			target_power = MAX_CHARGE_CURRENT * cap_voltage;
-		}
-		if((target_power < 0) && (-target_power > MAX_DISCHARGE_CURRENT * cap_voltage)){
-			target_power = -MAX_DISCHARGE_CURRENT * cap_voltage;
-		}
-
-		float final_duty = Process_Dynamic_Power_Tracking(target_power, capacitor_power);
-
-		/* --- Apply PWM --- */
-		if (final_duty > MAX_DUTY_CYCLE) final_duty = MAX_DUTY_CYCLE;
-		if (final_duty < MIN_DUTY_CYCLE) final_duty = MIN_DUTY_CYCLE;
-
-		uint32_t ccr_value = (uint32_t)(final_duty * 3839.0f);
-		TIM1->CCR1 = ccr_value;
-		TIM3->CCR4 = ccr_value;
-		PowerStage_Enable(1);
-	}
+    /* --- Apply PWM --- */
+    PowerStage_SetDutyPermille((uint32_t)pwm_command);
+    PowerStage_Enable(1);
 }
 /* USER CODE END 0 */
 
@@ -377,7 +404,6 @@ int main(void)
   PeriphCommonClock_Config();
 
   MX_GPIO_Init();
-  MX_DMA_Init();
   MX_ADC1_Init();
   MX_ADC2_Init();
   MX_FDCAN2_Init();
@@ -386,10 +412,7 @@ int main(void)
   MX_TIM3_Init();
 
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, 2);
-  HAL_ADC_Start_DMA(&hadc2, (uint32_t*)adc2_buffer, 3);
-
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4); //for duty cycle
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
 
   PowerStage_SetDutyPermille(PWM_DUTY_PERMILLE_START);
   PowerStage_Enable(1);
@@ -404,61 +427,59 @@ int main(void)
   while (1)
   {
     /* ===== READ ADCs ===== */
-    uint16_t raw_imotor = adc_buffer[0]; // Channel 1 (PA6)
-    uint16_t raw_vbus   = adc_buffer[1]; // Channel 2 (PC4)
+    ADC1_Read_PA6_PC4(&adc_pa6, &adc_pc4);
+    ADC2_Read_PC0_PA2_PA3(&adc_pc0, &adc_pa2, &adc_pa3);
 
-    uint16_t raw_ibus = adc2_buffer[0];
-    uint16_t raw_vcap = adc2_buffer[1];
-    uint16_t raw_icap = adc2_buffer[2];
+    /* Extra averaging for motor current */
+    v_pa6 = Read_Averaged_PA6_Voltage(IMOTOR_AVG_SAMPLES);
 
-    float v_pa6 = ADC_To_Voltage((float)raw_imotor, 3.3f);
-    float v_pc4 = ADC_To_Voltage((float)raw_vbus, 3.3f);
-    float v_pc0 = ADC_To_Voltage((float)raw_ibus, 3.3f);
-    float v_pa2 = ADC_To_Voltage((float)raw_vcap, 3.3f);
-    float v_pa3 = ADC_To_Voltage((float)raw_icap, 3.3f);
+    v_pc4 = ADC_To_Voltage(adc_pc4, 3.3f);
+    v_pc0 = ADC_To_Voltage(adc_pc0, 3.3f);
+    v_pa2 = ADC_To_Voltage(adc_pa2, 3.3f);
+    v_pa3 = ADC_To_Voltage(adc_pa3, 3.3f);
 
-    /* Reconstruct bus voltage (no filtering) */
+    /* Reconstruct bus/cap voltages */
     bus_voltage_raw = (v_pc4 < ADC_ZERO_CLAMP_V) ? 0.0f : v_pc4 * BUS_SENSE_GAIN;
+    cap_voltage_raw = (v_pa2 < ADC_ZERO_CLAMP_V) ? 0.0f : v_pa2 * CAP_SENSE_GAIN;
 
-    /* Convert INA240 output to current (no filtering) */
-    i_motor_current_raw = INA240_VoltageToCurrent(v_pa6);
+    /* Convert INA240 outputs to currents */
+    i_motor_current_raw = INA240_VoltageToCurrent(v_pa6, IMOTOR_ZERO_CURRENT_V);
+    i_bat_current_raw   = INA240_VoltageToCurrent(v_pc0, IBAT_ZERO_CURRENT_V);
+    i_cap_current_raw   = INA240_VoltageToCurrent(v_pa3, ICAP_ZERO_CURRENT_V);
 
-    /* Reconstruct cap voltage (with filtering) */
-    float instant_vcap = (v_pa2 < ADC_ZERO_CLAMP_V) ? 0.0f : (v_pa2 * CAP_SENSE_GAIN);
-    cap_voltage_raw = (FILTER_ALPHA * instant_vcap) + ((1.0f - FILTER_ALPHA) * cap_voltage_raw);
+    /* Motor deadband */
+    if ((i_motor_current_raw > -IMOTOR_DEADBAND_A) && (i_motor_current_raw < IMOTOR_DEADBAND_A))
+    {
+        i_motor_current_raw = 0.0f;
+    }
 
-    /* Convert INA240 outputs to current (with filtering) */
-    float instant_ibat = INA240_VoltageToCurrent(v_pc0);
-    i_bat_current_raw = (FILTER_ALPHA * instant_ibat) + ((1.0f - FILTER_ALPHA) * i_bat_current_raw);
+    /* Initialize or filter */
+    if (!filter_initialized)
+    {
+        bus_voltage      = bus_voltage_raw;
+        cap_voltage      = cap_voltage_raw;
+        i_motor_current  = i_motor_current_raw;
+        i_bat_current    = i_bat_current_raw;
+        i_cap_current    = i_cap_current_raw;
+        i_bat_protect    = ABSF(i_bat_current_raw);
+        i_cap_protect    = ABSF(i_cap_current_raw);
+        filter_initialized = 1U;
+    }
+    else
+    {
+        bus_voltage      = LPF_Apply(bus_voltage, bus_voltage_raw, VOLTAGE_FILTER_ALPHA);
+        cap_voltage      = LPF_Apply(cap_voltage, cap_voltage_raw, VOLTAGE_FILTER_ALPHA);
 
-    float instant_icap = INA240_VoltageToCurrent(v_pa3);
-    i_cap_current_raw = (FILTER_ALPHA * instant_icap) + ((1.0f - FILTER_ALPHA) * i_cap_current_raw);
+        i_motor_current  = LPF_Apply(i_motor_current, i_motor_current_raw, IMOTOR_FILTER_ALPHA);
+        i_bat_current    = LPF_Apply(i_bat_current, i_bat_current_raw, CURRENT_FILTER_ALPHA);
+        i_cap_current    = LPF_Apply(i_cap_current, i_cap_current_raw, CURRENT_FILTER_ALPHA);
 
-    if (ABSF(i_motor_current_raw) < IMOTOR_DEADBAND_AMPS)
-    	{
-            i_motor_current_raw = 0.0f;
-        }
-
-    if (ABSF(i_cap_current_raw) < ICAP_DEADBAND_AMPS)
-        {
-            i_cap_current_raw = 0.0f;
-        }
-
-    if (ABSF(i_bat_current_raw) < IBAT_DEADBAND_AMPS)
-        {
-            i_bat_current_raw = 0.0f;
-        }
-
-    bus_voltage      = bus_voltage_raw;
-    cap_voltage      = cap_voltage_raw;
-    i_motor_current  = i_motor_current_raw;
-    i_bat_current    = i_bat_current_raw;
-    i_cap_current    = i_cap_current_raw;
-    i_bat_protect    = i_bat_current_raw;
-    i_cap_protect    = i_cap_current_raw;
+        i_bat_protect    = LPF_Apply(i_bat_protect, ABSF(i_bat_current_raw), PROTECTION_FILTER_ALPHA);
+        i_cap_protect    = LPF_Apply(i_cap_protect, ABSF(i_cap_current_raw), PROTECTION_FILTER_ALPHA);
+    }
 
     /* ===== PARALLEL POWER-SHARING CONTROLLER ===== */
-    PowerSharingControl(bus_voltage, i_bat_current, cap_voltage, i_cap_current, i_motor_current, bus_voltage);
+    PowerSharingControl(bus_voltage, cap_voltage, i_bat_current_raw, i_cap_current_raw);
 
     /* ===== VOFA telemetry ===== */
     VOFA_UpdateData();
