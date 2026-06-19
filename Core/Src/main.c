@@ -9,6 +9,7 @@
 
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
+#include "stm32h7xx_hal_rcc_ex.h"
 #include "adc.h"
 #include "fdcan.h"
 #include "memorymap.h"
@@ -33,6 +34,13 @@ typedef struct
     float i_Cap;
     uint32_t tail;
 } VofaData_t;
+
+uint16_t adc1_buffer[2] = {0U, 0U}; //holds adc values for motor current and bus voltage
+// Index 0 = PC0 (IBUS)
+// Index 1 = PA2 (VCAP)
+// Index 2 = PA3 (ICAP)
+uint16_t adc2_buffer[3] = {0U, 0U, 0U};
+float power_integral = 0.0f;
 /* USER CODE END PTD */
 
 /* Private define ------------------------------------------------------------*/
@@ -85,9 +93,6 @@ float i_cap_current   = 0.0f;
 float i_bat_protect = 0.0f;
 float i_cap_protect = 0.0f;
 
-/* Duty command in permille */
-uint32_t pwm_duty_permille = PWM_DUTY_PERMILLE_START;
-
 /* Init flag */
 uint8_t filter_initialized = 0U;
 
@@ -106,10 +111,23 @@ void VOFA_SendData(void);
 void PowerStage_SetDutyPermille(uint32_t duty_permille);
 void PowerStage_Enable(uint8_t en);
 
-float INA240_VoltageToCurrent(float vout, float zero_v);
+float INA240_VoltageToCurrent(float vout);
 float ABSF(float x);
 
 uint32_t DutyPermilleToCompare(TIM_HandleTypeDef *htim, uint32_t duty_permille);
+
+void MX_DMA_Init(void)
+{
+  /* 1. Enable the clock for the DMAMUX and the DMA engine */
+	RCC->AHB3ENR |= (1UL << 28);
+	__HAL_RCC_DMA1_CLK_ENABLE();
+
+  /* 2. Configure the DMA Interrupt Priorities */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
+  HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream1_IRQn);
+}
 
 void MPU_Config(void)
 {
@@ -206,9 +224,7 @@ void Error_Handler(void)
   }
 }
 
-
-/* NEW: true parallel power-sharing system */
-void PowerSharingControl(float vbus, float vcap, float ibat_raw, float icap_raw);
+void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage, float cap_current, float motor_current, float motor_voltage);
 
 /* USER CODE END PFP */
 
@@ -322,7 +338,7 @@ float Process_Dynamic_Power_Tracking(float target_power, float actual_power)
 void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage, float cap_current, float motor_current, float motor_voltage)
 {
 	float requested_power = motor_current * motor_voltage;
-	float battery_power = bat_voltage * bat_current;
+	//float battery_power = bat_voltage * bat_current;
 	float capacitor_energy = 0.5f * CAPACITANCE_TOTAL * cap_voltage * cap_voltage;
 	float capacitor_power = cap_voltage * cap_current;
 
@@ -386,13 +402,10 @@ int main(void)
   MX_TIM3_Init();
 
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc_buffer, 2);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 2);
   HAL_ADC_Start_DMA(&hadc2, (uint32_t*)adc2_buffer, 3);
 
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4); //for duty cycle
-
-  PowerStage_SetDutyPermille(PWM_DUTY_PERMILLE_START);
-  PowerStage_Enable(1);
 
   VOFA_Init();
 
@@ -404,8 +417,8 @@ int main(void)
   while (1)
   {
     /* ===== READ ADCs ===== */
-    uint16_t raw_imotor = adc_buffer[0]; // Channel 1 (PA6)
-    uint16_t raw_vbus   = adc_buffer[1]; // Channel 2 (PC4)
+    uint16_t raw_imotor = adc1_buffer[0]; // Channel 1 (PA6)
+    uint16_t raw_vbus   = adc1_buffer[1]; // Channel 2 (PC4)
 
     uint16_t raw_ibus = adc2_buffer[0];
     uint16_t raw_vcap = adc2_buffer[1];

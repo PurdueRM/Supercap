@@ -1,0 +1,23 @@
+build/
+Build/
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.d
+*.o
+*.su
+
+# ==========================================
+# STM32CubeIDE / Eclipse Private Files
+# ==========================================
+.settings/
+.gdbinit
+*.launch
+
+# ==========================================
+# Operating System & Local Artifacts
+# ==========================================
+.DS_Store
+Thumbs.db

@@ -7,6 +7,7 @@ extern "C" {
 
 /* ---------------- Power Limit ---------------- */
 #define POWER_LIMIT 45 // in W, this should be read from a CAN message
+#define ref_system_indicates_off 1 //should be removed once CAN is setup
 
 /* ---------------- Safety ---------------- */
 #define MINIMUM_CAPACITOR_ENERGY 450.0f // The energy value the capacitor should never go under (Joules)
@@ -40,6 +41,7 @@ extern "C" {
 #define IBAT_DEADBAND_AMPS 0.05f //currents below this value are just converted to 0 for readability
 #define ICAP_DEADBAND_AMPS 0.05f //currents below this value are just converted to 0 for readability
 #define IMOTOR_DEADBAND_AMPS 0.05f //currents below this value are just converted to 0 for readability
+#define FILTER_ALPHA 0.05f //how much to use current value compared to old value in filtering
 
 
 #ifdef __cplusplus
