@@ -25,6 +25,12 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN PTD */
+typedef enum {
+    SYSTEM_OFF        = 0,
+    SYSTEM_CHARGING   = 1,
+    SYSTEM_DISCHARGING = 2
+} SystemState_t;
+
 typedef struct
 {
     float i_Motor;
@@ -32,6 +38,7 @@ typedef struct
     float i_Bat;
     float V_Cap;
     float i_Cap;
+    float system_status;
     uint32_t tail;
 } VofaData_t;
 
@@ -60,6 +67,7 @@ float power_integral = 0.0f;
 /* USER CODE BEGIN PV */
 
 VofaData_t g_vofa_frame;
+SystemState_t current_state = SYSTEM_OFF;
 
 /* Raw ADC data */
 uint16_t adc_pa6 = 0;
@@ -255,6 +263,7 @@ void VOFA_Init(void)
     g_vofa_frame.i_Bat   = 0.0f;
     g_vofa_frame.V_Cap   = 0.0f;
     g_vofa_frame.i_Cap   = 0.0f;
+    g_vofa_frame.system_status = 0.0f;
     g_vofa_frame.tail    = 0x7F800000;
 }
 
@@ -265,6 +274,7 @@ void VOFA_UpdateData(void)
     g_vofa_frame.i_Bat   = i_bat_current;
     g_vofa_frame.V_Cap   = cap_voltage;
     g_vofa_frame.i_Cap   = i_cap_current;
+    g_vofa_frame.system_status = (float)current_state;
     g_vofa_frame.tail    = 0x7F800000;
 }
 
@@ -312,7 +322,8 @@ float Process_Dynamic_Power_Tracking(float target_power, float actual_power)
     //and make sure discharging always charges over the necessary extra power
     if (target_power > 0.0f)
         {
-            // --- CHARGING MODE ---
+            // --- CHARGING MODE ---'
+    		current_state = SYSTEM_CHARGING;
             // Never exceed target_power
             if (actual_power >= target_power && final_duty > combined_feed_forward)
             {
@@ -323,6 +334,7 @@ float Process_Dynamic_Power_Tracking(float target_power, float actual_power)
     else if (target_power < 0.0f)
         {
             // --- DISCHARGING MODE ---
+    		current_state = SYSTEM_DISCHARGING;
             // Never discharge "more" than target_power
             if (actual_power <= target_power && final_duty < combined_feed_forward)
             {
@@ -347,6 +359,7 @@ void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage
 		//off
 		PowerStage_Enable(0); //turns off charging and discharging
 		power_integral = 0.0f;
+		current_state = SYSTEM_OFF;
 	}
 	else{
 		//charging or discharging
