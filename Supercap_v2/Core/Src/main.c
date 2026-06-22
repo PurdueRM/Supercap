@@ -24,11 +24,11 @@
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
-#include "config.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdint.h>
+#include "config.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -294,7 +294,7 @@ void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage
 		if (final_duty > MAX_DUTY_CYCLE) final_duty = MAX_DUTY_CYCLE;
 		if (final_duty < MIN_DUTY_CYCLE) final_duty = MIN_DUTY_CYCLE;
 
-		uint32_t ccr_value = (uint32_t)(final_duty * 3839.0f);
+		uint32_t ccr_value = (uint32_t)(final_duty * 1919.0f);
 		TIM1->CCR1 = ccr_value;
 		TIM3->CCR4 = ccr_value;
 		PowerStage_Enable(1);
@@ -348,10 +348,12 @@ int main(void)
   MX_ADC3_Init();
   /* USER CODE BEGIN 2 */
   
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  SCB_InvalidateDCache_by_Addr((uint32_t*)adc1_buffer, sizeof(adc1_buffer));
+  SCB_InvalidateDCache_by_Addr((uint32_t*)adc2_buffer, sizeof(adc2_buffer));
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 2);
   HAL_ADC_Start_DMA(&hadc2, (uint32_t*)adc2_buffer, 3);
 
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4); //for duty cycle
 
   VOFA_Init();
@@ -375,10 +377,14 @@ int main(void)
     uint16_t raw_vcap = adc2_buffer[1];
     uint16_t raw_icap = adc2_buffer[2];
 
-    uint16_t raw_vrefint = HAL_ADC_GetValue(&hadc3);
-
-    // 3. Use the built-in ST Low-Layer macro to compute the exact VREF voltage dynamically
-    dynamic_vref = (float)__LL_ADC_CALC_VREFANALOG_VOLTAGE(raw_vrefint, LL_ADC_RESOLUTION_12B) / 1000.0f;
+    HAL_ADC_Start(&hadc3);
+    if (HAL_ADC_PollForConversion(&hadc3, 10) == HAL_OK)
+    {
+    	uint16_t raw_vrefint = HAL_ADC_GetValue(&hadc3);
+    	// Use the built-in ST Low-Layer macro to compute the exact VREF voltage dynamically
+    	dynamic_vref = (float)__LL_ADC_CALC_VREFANALOG_VOLTAGE(raw_vrefint, LL_ADC_RESOLUTION_16B) / 1000.0f;// may need to be _12B
+    }
+    HAL_ADC_Stop(&hadc3);
 
     v_pa6 = ADC_To_Voltage((float)raw_imotor, dynamic_vref);
     v_pc4 = ADC_To_Voltage((float)raw_vbus, dynamic_vref);
