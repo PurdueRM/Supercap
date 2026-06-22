@@ -18,15 +18,14 @@
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
-#include "stm32h7xx_hal_rcc_ex.h"
 #include "adc.h"
-#include "fdcan.h"
-#include "memorymap.h"
 #include "dma.h"
+#include "fdcan.h"
 #include "tim.h"
 #include "usart.h"
 #include "gpio.h"
 #include "config.h"
+
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include <stdint.h>
@@ -45,6 +44,7 @@ typedef enum {
     SYSTEM_DISCHARGING = 2
 } SystemState_t;
 
+#pragma pack(push, 1)
 typedef struct
 {
     float i_Motor;
@@ -53,8 +53,14 @@ typedef struct
     float V_Cap;
     float i_Cap;
     float system_status;
+    float dynamic_vref;
+    float vbus;
+    float vcap;
     uint32_t tail;
 } VofaData_t;
+#pragma pack(pop)
+
+float dynamic_vref;
 
 uint16_t adc1_buffer[2] = {0U, 0U}; //holds adc values for motor current and bus voltage
 // Index 0 = PC0 (IBUS)
@@ -161,6 +167,9 @@ void VOFA_Init(void)
     g_vofa_frame.V_Cap   = 0.0f;
     g_vofa_frame.i_Cap   = 0.0f;
     g_vofa_frame.system_status = 0.0f;
+    g_vofa_frame.dynamic_vref = 0.0f;
+    g_vofa_frame.vbus = 0.0f;
+    g_vofa_frame.vcap = 0.0f;
     g_vofa_frame.tail    = 0x7F800000;
 }
 
@@ -172,6 +181,9 @@ void VOFA_UpdateData(void)
     g_vofa_frame.V_Cap   = cap_voltage;
     g_vofa_frame.i_Cap   = i_cap_current;
     g_vofa_frame.system_status = (float)current_state;
+    g_vofa_frame.dynamic_vref = dynamic_vref;
+    g_vofa_frame.vbus = v_pc4;
+    g_vofa_frame.vcap = v_pa2;
     g_vofa_frame.tail    = 0x7F800000;
 }
 
@@ -333,6 +345,7 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM3_Init();
   MX_TIM1_Init();
+  MX_ADC3_Init();
   /* USER CODE BEGIN 2 */
   
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
@@ -362,11 +375,16 @@ int main(void)
     uint16_t raw_vcap = adc2_buffer[1];
     uint16_t raw_icap = adc2_buffer[2];
 
-    float v_pa6 = ADC_To_Voltage((float)raw_imotor, 3.3f);
-    float v_pc4 = ADC_To_Voltage((float)raw_vbus, 3.3f);
-    float v_pc0 = ADC_To_Voltage((float)raw_ibus, 3.3f);
-    float v_pa2 = ADC_To_Voltage((float)raw_vcap, 3.3f);
-    float v_pa3 = ADC_To_Voltage((float)raw_icap, 3.3f);
+    uint16_t raw_vrefint = HAL_ADC_GetValue(&hadc3);
+
+    // 3. Use the built-in ST Low-Layer macro to compute the exact VREF voltage dynamically
+    dynamic_vref = (float)__LL_ADC_CALC_VREFANALOG_VOLTAGE(raw_vrefint, LL_ADC_RESOLUTION_12B) / 1000.0f;
+
+    v_pa6 = ADC_To_Voltage((float)raw_imotor, dynamic_vref);
+    v_pc4 = ADC_To_Voltage((float)raw_vbus, dynamic_vref);
+    v_pc0 = ADC_To_Voltage((float)raw_ibus, dynamic_vref);
+    v_pa2 = ADC_To_Voltage((float)raw_vcap, dynamic_vref);
+    v_pa3 = ADC_To_Voltage((float)raw_icap, dynamic_vref);
 
     /* Reconstruct bus voltage (no filtering) */
     bus_voltage_raw = (v_pc4 < ADC_ZERO_CLAMP_V) ? 0.0f : v_pc4 * BUS_SENSE_GAIN;
@@ -419,6 +437,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
   }
   /* USER CODE END 3 */
 }

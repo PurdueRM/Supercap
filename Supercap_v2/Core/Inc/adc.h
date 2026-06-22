@@ -36,6 +36,8 @@ extern ADC_HandleTypeDef hadc1;
 
 extern ADC_HandleTypeDef hadc2;
 
+extern ADC_HandleTypeDef hadc3;
+
 /* USER CODE BEGIN Private defines */
 HAL_StatusTypeDef ADC2_Read_PC0_PA2_PA3(uint16_t *pc0_value, uint16_t *pa2_value, uint16_t *pa3_value);
 HAL_StatusTypeDef ADC1_Read_PA6_PC4(uint16_t *pa6_value, uint16_t *pc4_value);
@@ -45,6 +47,7 @@ void GPIO_On();
 
 void MX_ADC1_Init(void);
 void MX_ADC2_Init(void);
+void MX_ADC3_Init(void);
 
 /* USER CODE BEGIN Prototypes */
 
