@@ -149,7 +149,7 @@ float ABSF(float x)
 
 float INA240_VoltageToCurrent(float voltage)
 {
-    return voltage * CURRENT_SHUNT_SCALE;
+    return (voltage - INA240_OFFSET_V) * CURRENT_SHUNT_SCALE;
 }
 
 void PowerStage_Enable(uint8_t en)
@@ -348,8 +348,8 @@ int main(void)
   MX_ADC3_Init();
   /* USER CODE BEGIN 2 */
   
-  SCB_InvalidateDCache_by_Addr((uint32_t*)adc1_buffer, sizeof(adc1_buffer));
-  SCB_InvalidateDCache_by_Addr((uint32_t*)adc2_buffer, sizeof(adc2_buffer));
+  //SCB_InvalidateDCache_by_Addr((uint32_t*)adc1_buffer, sizeof(adc1_buffer));
+  //SCB_InvalidateDCache_by_Addr((uint32_t*)adc2_buffer, sizeof(adc2_buffer));
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 2);
   HAL_ADC_Start_DMA(&hadc2, (uint32_t*)adc2_buffer, 3);
 

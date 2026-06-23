@@ -31,6 +31,7 @@ extern "C" {
 
 /* ---------------- INA240 conversion to current ---------------- */
 #define CURRENT_SHUNT_SCALE			10.0f // conversion from voltage to current: 1 / (0.002 ohms * 50x gain) = 10.0f
+#define INA240_OFFSET_V				1.50f //midpoint of the chip (3-0)/2
 
 /* ---------------- PD Controller ---------------- */
 #define KP_GAIN 0.01f
@@ -41,7 +42,7 @@ extern "C" {
 #define IBAT_DEADBAND_AMPS 0.05f //currents below this value are just converted to 0 for readability
 #define ICAP_DEADBAND_AMPS 0.05f //currents below this value are just converted to 0 for readability
 #define IMOTOR_DEADBAND_AMPS 0.05f //currents below this value are just converted to 0 for readability
-#define FILTER_ALPHA 0.05f //how much to use current value compared to old value in filtering
+#define FILTER_ALPHA 0.1f //how much to use current value compared to old value in filtering
 
 
 #ifdef __cplusplus
