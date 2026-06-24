@@ -295,8 +295,8 @@ void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage
 		if (final_duty < MIN_DUTY_CYCLE) final_duty = MIN_DUTY_CYCLE;
 
 		uint32_t ccr_value = (uint32_t)(final_duty * 1919.0f);
-		TIM1->CCR1 = ccr_value;
-		TIM3->CCR4 = ccr_value;
+		TIM1->CCR1 = ccr_value; //this should be 0 to discharge
+		TIM3->CCR4 = ccr_value; //should be 0 to charge
 		PowerStage_Enable(1);
 	}
 }
