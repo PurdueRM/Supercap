@@ -43,7 +43,8 @@ typedef enum {
     SYSTEM_CHARGING   = 1,
     SYSTEM_DISCHARGING = 2
 } SystemState_t;
-
+//fix struct naming and add duty cycle, add clip reason
+//does not charge
 #pragma pack(push, 1)
 typedef struct
 {
@@ -297,10 +298,10 @@ void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage
 		uint32_t ccr_value = (uint32_t)(final_duty * 1919.0f);
 		if( target_power > 0){//charging
 			TIM1->CCR1 = ccr_value;
-			TIM3->CCR4 = 1919;
+			TIM3->CCR4 = 0;
 		}
 		else{ //discharging
-			TIM1->CCR1 = 1919;
+			TIM1->CCR1 = 0;
 			TIM3->CCR4 = 1919 - ccr_value;
 		}
 		PowerStage_Enable(1);
