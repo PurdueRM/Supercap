@@ -298,7 +298,7 @@ void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage
 		uint32_t ccr_value = (uint32_t)(final_duty * 1919.0f);
 		if( target_power > 0){//charging
 			TIM1->CCR1 = ccr_value;
-			TIM3->CCR4 = 0;
+			TIM3->CCR4 = 1880;
 		}
 		else{ //discharging
 			TIM1->CCR1 = 0;
