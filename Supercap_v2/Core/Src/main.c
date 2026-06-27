@@ -411,6 +411,10 @@ int main(void)
 
   HAL_TIM_Base_Start(&htim1);
 
+  __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
+    htim1.Instance->EGR = TIM_EGR_UG;
+    htim3.Instance->EGR = TIM_EGR_UG;
+
   if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
       // If execution hits this block, the ADC detected a collision.
       // Clearing it forces a reset of the status flags:
