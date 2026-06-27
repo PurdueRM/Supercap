@@ -32,6 +32,7 @@ extern "C" {
 /* ---------------- INA240 conversion to current ---------------- */
 #define CURRENT_SHUNT_SCALE			10.0f // conversion from voltage to current: 1 / (0.002 ohms * 50x gain) = 10.0f
 #define INA240_OFFSET_V				1.50f //midpoint of the chip (3-0)/2
+#define CURRENT_OFFSET				0.6
 
 /* ---------------- PD Controller ---------------- */
 #define KP_GAIN 0.01f
