@@ -407,6 +407,24 @@ int main(void)
 
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
+  HAL_TIM_Base_Start(&htim3);
+
+  HAL_TIM_Base_Start(&htim1);
+
+  if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
+      // If execution hits this block, the ADC detected a collision.
+      // Clearing it forces a reset of the status flags:
+      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
+      HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 2);
+  }
+
+  if (__HAL_ADC_GET_FLAG(&hadc2, ADC_FLAG_OVR)) {
+      // If execution hits this block, the ADC detected a collision.
+      // Clearing it forces a reset of the status flags:
+      __HAL_ADC_CLEAR_FLAG(&hadc2, ADC_FLAG_OVR);
+      HAL_ADC_Start_DMA(&hadc2, (uint32_t*)adc2_buffer, 3);
+  }
+
 
   VOFA_Init();
 
