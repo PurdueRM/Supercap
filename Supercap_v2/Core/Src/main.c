@@ -201,21 +201,11 @@ void VOFA_SendData(void)
 float Process_Dynamic_Power_Tracking(float target_power, float actual_power)
 {
     static float last_target_power = 0.0f;
-    //positive target power = charging
 
-    // 1. Calculate the moving physical baseline
-    float equilibrium_ff = cap_voltage_raw / bus_voltage_raw;
-    float power_ff = 0.0f;
-    if (cap_voltage_raw > 1.0f) {
-            power_ff = (SYSTEM_R * target_power) / (cap_voltage_raw * bus_voltage_raw);
-    }
-
-    float combined_feed_forward = equilibrium_ff + power_ff;
-
-    // 2. Calculate actual power
+    // 1. Calculate actual power error
     float power_error = target_power - actual_power;
 
-    // If the mode changes, clear mem to prevent lag/overshoot
+    // 2. Anti-Windup: If direction flips, instantly clear the accumulator
     if ((target_power > 0.0f && last_target_power < 0.0f) ||
         (target_power < 0.0f && last_target_power > 0.0f))
     {
@@ -223,43 +213,60 @@ float Process_Dynamic_Power_Tracking(float target_power, float actual_power)
     }
     last_target_power = target_power;
 
+    // 3. Accumulate Error
     power_integral += power_error * KI_GAIN;
 
-    // clamp integral term
+    // 4. Bound the integral term to prevent runaway windup
     if (power_integral > MAX_INTEGRAL_TERM)  power_integral = MAX_INTEGRAL_TERM;
     if (power_integral < -MAX_INTEGRAL_TERM) power_integral = -MAX_INTEGRAL_TERM;
 
-    // 6. Compute final duty cycle
-    float control_effort = combined_feed_forward + (power_error * KP_GAIN) + power_integral;
+    // 5. Compute Proportional + Integral control action
+    // Note: Feed-forward is omitted here because phase equilibrium is inherently 0.
+    float pi_output = (power_error * KP_GAIN) + power_integral;
 
-    //make sure charging always charges under the available power
-    //and make sure discharging always charges over the necessary extra power
+    // 6. Enforce hard directional limits and prevent overshoot
     if (target_power > 0.0f)
+    {
+        // --- CHARGING MODE ---
+        // If we are overshooting the target charging power, freeze the drive effort
+        if (actual_power >= target_power)
         {
-            // --- CHARGING MODE ---'
-    		current_state = SYSTEM_CHARGING;
-            // Never exceed target_power
-            if (actual_power >= target_power && control_effort > combined_feed_forward)
-            {
-            	control_effort = combined_feed_forward; // Force it back toward 0A charging
-                power_integral = 0.0f;          // Freeze integral windup
-                global_clip_reason += 1.0f;
-            }
-        }
-    else if (target_power < 0.0f)
-        {
-            // --- DISCHARGING MODE ---
-    		current_state = SYSTEM_DISCHARGING;
-            // Never discharge "more" than target_power
-            if (actual_power <= target_power && control_effort < combined_feed_forward)
-            {
-            	control_effort = combined_feed_forward; // Force it back toward 0A discharging
-                power_integral = 0.0f;          // Freeze integral windup
-                global_clip_reason += 2.0f;
-            }
+            if (pi_output > 0.0f) pi_output = 0.0f;
+            power_integral = 0.0f; // Freeze accumulator
+            global_clip_reason += 1;
         }
 
-    return control_effort;
+        // For charging, we only expect a positive correction phase shift
+        if (pi_output < 0.0f) pi_output = 0.0f;
+    }
+    else if (target_power < 0.0f)
+    {
+        // --- DISCHARGING MODE ---
+        // Since target_power and actual_power are negative during discharge,
+        // actual_power <= target_power means we are discharging *more* power than desired.
+        if (actual_power <= target_power)
+        {
+            if (pi_output < 0.0f) pi_output = 0.0f;
+            power_integral = 0.0f; // Freeze accumulator
+            global_clip_reason += 2;
+        }
+
+        // For discharging, invert the negative PI output to extract the absolute shift magnitude
+        pi_output = -pi_output;
+        if (pi_output < 0.0f) pi_output = 0.0f;
+    }
+    else
+    {
+        // Target is zero
+        pi_output = 0.0f;
+        power_integral = 0.0f;
+    }
+
+    // 7. Normalize the final effort stringently between 0.0 and 1.0
+    // This value maps directly to 0% to 100% of your MAX_PHASE_SHIFT (960 ticks)
+    if (pi_output > 1.0f) pi_output = 1.0f;
+
+    return pi_output;
 }
 
 void PowerStage_SetPhaseSystem(float target_power, float control_effort)
@@ -274,15 +281,16 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
 
     if (target_power > 0.0f)
     {
-        // --- CHARGING MODE ---
-        // Slide the trigger point forward to delay TIM3 relative to TIM1
+        // --- CHARGING MODE (TIM1 Leads TIM3) ---
+        // As tick_offset goes 0 -> 960, TIM3 resets later and later (Phase lag)
         __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, tick_offset);
     }
     else if (target_power < 0.0f)
     {
-        // --- DISCHARGING MODE ---
-        // Slide the trigger point backward toward the peak to advance TIM3
-        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, CENTER_ALIGNED_MAX_REG - tick_offset);
+        // --- DISCHARGING MODE (TIM3 Leads TIM1) ---
+        // To make TIM3 lead TIM1, TIM3 must reset *before* TIM1 finishes its cycle.
+        // We project the offset symmetrically across the center-aligned period valley.
+    	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, HALF_DUTY_TICKS - tick_offset);
     }
     else
     {
@@ -309,6 +317,8 @@ void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage
 	else{
 		//charging or discharging
 		float target_power = POWER_LIMIT - requested_power;
+		float safe_cap_volt = (cap_voltage > 0.5f) ? cap_voltage : 0.5f;
+		float max_safe_charge_power = MAX_CHARGE_CURRENT * safe_cap_volt;
 
 		//safety limits
 		if ((capacitor_energy < MINIMUM_CAPACITOR_ENERGY) && (target_power < 0.0f)) {
@@ -319,8 +329,8 @@ void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage
 			target_power = 0.0f;
 			global_clip_reason += 8;
 		}
-		if((target_power > 0) && (target_power > MAX_CHARGE_CURRENT * cap_voltage)){
-			target_power = MAX_CHARGE_CURRENT * cap_voltage;
+		if((target_power > 0.0f) && (target_power > max_safe_charge_power)){
+			target_power = max_safe_charge_power;
 			global_clip_reason += 16;
 		}
 		if((target_power < 0) && (-target_power > MAX_DISCHARGE_CURRENT * cap_voltage)){
@@ -389,11 +399,14 @@ int main(void)
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS);
   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS);
 
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
+
   // 2. Start internal master link channel
   HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_2);
 
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
+
 
   VOFA_Init();
 
