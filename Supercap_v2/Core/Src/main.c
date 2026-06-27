@@ -279,26 +279,28 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     uint32_t tick_offset = (uint32_t)(control_effort * (float)HALF_DUTY_TICKS);
     global_phase = (float)tick_offset;
 
-    if (target_power > 0.0f)
-    {
-        // --- CHARGING MODE (TIM1 Leads TIM3) ---
-        // As tick_offset goes 0 -> 960, TIM3 resets later and later (Phase lag)
-    	current_state = 1;
-        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, tick_offset);
-    }
-    else if (target_power < 0.0f)
-    {
-        // --- DISCHARGING MODE (TIM3 Leads TIM1) ---
-        // To make TIM3 lead TIM1, TIM3 must reset *before* TIM1 finishes its cycle.
-        // We project the offset symmetrically across the center-aligned period valley.
-    	current_state = 2;
-    	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, HALF_DUTY_TICKS - tick_offset);
-    }
-    else
-    {
-        // --- EQUILIBRIUM ---
-        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
-    }
+//    if (target_power > 0.0f)
+//    {
+//        // --- CHARGING MODE (TIM1 Leads TIM3) ---
+//        // As tick_offset goes 0 -> 960, TIM3 resets later and later (Phase lag)
+//    	current_state = 1;
+//        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, tick_offset);
+//    }
+//    else if (target_power < 0.0f)
+//    {
+//        // --- DISCHARGING MODE (TIM3 Leads TIM1) ---
+//        // To make TIM3 lead TIM1, TIM3 must reset *before* TIM1 finishes its cycle.
+//        // We project the offset symmetrically across the center-aligned period valley.
+//    	current_state = 2;
+//    	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, HALF_DUTY_TICKS - tick_offset);
+//    }
+//    else
+//    {
+//        // --- EQUILIBRIUM ---
+//        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
+//    }
+    current_state = 1;
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1919);
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
