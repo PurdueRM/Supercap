@@ -283,6 +283,7 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     {
         // --- CHARGING MODE (TIM1 Leads TIM3) ---
         // As tick_offset goes 0 -> 960, TIM3 resets later and later (Phase lag)
+    	current_state = 1;
         __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, tick_offset);
     }
     else if (target_power < 0.0f)
@@ -290,6 +291,7 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
         // --- DISCHARGING MODE (TIM3 Leads TIM1) ---
         // To make TIM3 lead TIM1, TIM3 must reset *before* TIM1 finishes its cycle.
         // We project the offset symmetrically across the center-aligned period valley.
+    	current_state = 2;
     	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, HALF_DUTY_TICKS - tick_offset);
     }
     else
@@ -484,20 +486,20 @@ int main(void)
     float instant_icap = INA240_VoltageToCurrent(v_pa3);
     i_cap_current_raw = (FILTER_ALPHA * instant_icap) + ((1.0f - FILTER_ALPHA) * i_cap_current_raw);
 
-    if (ABSF(i_motor_current_raw) < IMOTOR_DEADBAND_AMPS)
-    	{
-            i_motor_current_raw = 0.0f;
-        }
-
-    if (ABSF(i_cap_current_raw) < ICAP_DEADBAND_AMPS)
-        {
-            i_cap_current_raw = 0.0f;
-        }
-
-    if (ABSF(i_bat_current_raw) < IBAT_DEADBAND_AMPS)
-        {
-            i_bat_current_raw = 0.0f;
-        }
+//    if (ABSF(i_motor_current_raw) < IMOTOR_DEADBAND_AMPS)
+//    	{
+//            i_motor_current_raw = 0.0f;
+//        }
+//
+//    if (ABSF(i_cap_current_raw) < ICAP_DEADBAND_AMPS)
+//        {
+//            i_cap_current_raw = 0.0f;
+//        }
+//
+//    if (ABSF(i_bat_current_raw) < IBAT_DEADBAND_AMPS)
+//        {
+//            i_bat_current_raw = 0.0f;
+//        }
 
     bus_voltage      = bus_voltage_raw;
     cap_voltage      = cap_voltage_raw;
