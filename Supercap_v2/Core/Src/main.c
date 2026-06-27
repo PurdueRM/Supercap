@@ -43,8 +43,7 @@ typedef enum {
     SYSTEM_CHARGING   = 1,
     SYSTEM_DISCHARGING = 2
 } SystemState_t;
-//fix struct naming and add duty cycle, add clip reason
-//does not charge
+
 #pragma pack(push, 1)
 typedef struct
 {
@@ -54,9 +53,9 @@ typedef struct
     float V_Cap;
     float i_Cap;
     float system_status;
-    float dynamic_vref;
-    float vbus;
-    float vcap;
+    float phase;
+    float control_effort;
+    float clip_reason;
     uint32_t tail;
 } VofaData_t;
 #pragma pack(pop)
@@ -69,6 +68,9 @@ uint16_t adc1_buffer[2] = {0U, 0U}; //holds adc values for motor current and bus
 // Index 2 = PA3 (ICAP)
 uint16_t adc2_buffer[3] = {0U, 0U, 0U};
 float power_integral = 0.0f;
+float global_phase;
+float global_control_effort;
+float global_clip_reason;
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -168,9 +170,9 @@ void VOFA_Init(void)
     g_vofa_frame.V_Cap   = 0.0f;
     g_vofa_frame.i_Cap   = 0.0f;
     g_vofa_frame.system_status = 0.0f;
-    g_vofa_frame.dynamic_vref = 0.0f;
-    g_vofa_frame.vbus = 0.0f;
-    g_vofa_frame.vcap = 0.0f;
+    g_vofa_frame.phase = 0.0f;
+    g_vofa_frame.control_effort = 0.0f;
+    g_vofa_frame.clip_reason = 0.0f;
     g_vofa_frame.tail    = 0x7F800000;
 }
 
@@ -182,10 +184,12 @@ void VOFA_UpdateData(void)
     g_vofa_frame.V_Cap   = cap_voltage;
     g_vofa_frame.i_Cap   = i_cap_current;
     g_vofa_frame.system_status = (float)current_state;
-    g_vofa_frame.dynamic_vref = dynamic_vref;
-    g_vofa_frame.vbus = v_pc4;
-    g_vofa_frame.vcap = v_pa2;
+    g_vofa_frame.phase = global_phase;
+    g_vofa_frame.control_effort = global_control_effort;
+    g_vofa_frame.clip_reason = global_clip_reason;
     g_vofa_frame.tail    = 0x7F800000;
+
+    global_clip_reason = 0.0f;
 }
 
 void VOFA_SendData(void)
@@ -226,7 +230,7 @@ float Process_Dynamic_Power_Tracking(float target_power, float actual_power)
     if (power_integral < -MAX_INTEGRAL_TERM) power_integral = -MAX_INTEGRAL_TERM;
 
     // 6. Compute final duty cycle
-    float final_duty = combined_feed_forward + (power_error * KP_GAIN) + power_integral;
+    float control_effort = combined_feed_forward + (power_error * KP_GAIN) + power_integral;
 
     //make sure charging always charges under the available power
     //and make sure discharging always charges over the necessary extra power
@@ -235,10 +239,11 @@ float Process_Dynamic_Power_Tracking(float target_power, float actual_power)
             // --- CHARGING MODE ---'
     		current_state = SYSTEM_CHARGING;
             // Never exceed target_power
-            if (actual_power >= target_power && final_duty > combined_feed_forward)
+            if (actual_power >= target_power && control_effort > combined_feed_forward)
             {
-                final_duty = combined_feed_forward; // Force it back toward 0A charging
+            	control_effort = combined_feed_forward; // Force it back toward 0A charging
                 power_integral = 0.0f;          // Freeze integral windup
+                global_clip_reason += 1.0f;
             }
         }
     else if (target_power < 0.0f)
@@ -246,14 +251,44 @@ float Process_Dynamic_Power_Tracking(float target_power, float actual_power)
             // --- DISCHARGING MODE ---
     		current_state = SYSTEM_DISCHARGING;
             // Never discharge "more" than target_power
-            if (actual_power <= target_power && final_duty < combined_feed_forward)
+            if (actual_power <= target_power && control_effort < combined_feed_forward)
             {
-                final_duty = combined_feed_forward; // Force it back toward 0A discharging
+            	control_effort = combined_feed_forward; // Force it back toward 0A discharging
                 power_integral = 0.0f;          // Freeze integral windup
+                global_clip_reason += 2.0f;
             }
         }
 
-    return final_duty;
+    return control_effort;
+}
+
+void PowerStage_SetPhaseSystem(float target_power, float control_effort)
+{
+    if (control_effort > 1.0f) control_effort = 1.0f;
+    if (control_effort < 0.0f) control_effort = 0.0f;
+    global_control_effort = control_effort;
+
+    // Scale the shift up to the maximum single-ramp peak (960 ticks = 90 degrees)
+    uint32_t tick_offset = (uint32_t)(control_effort * (float)HALF_DUTY_TICKS);
+    global_phase = (float)tick_offset;
+
+    if (target_power > 0.0f)
+    {
+        // --- CHARGING MODE ---
+        // Slide the trigger point forward to delay TIM3 relative to TIM1
+        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, tick_offset);
+    }
+    else if (target_power < 0.0f)
+    {
+        // --- DISCHARGING MODE ---
+        // Slide the trigger point backward toward the peak to advance TIM3
+        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, CENTER_ALIGNED_MAX_REG - tick_offset);
+    }
+    else
+    {
+        // --- EQUILIBRIUM ---
+        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
+    }
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
@@ -278,32 +313,23 @@ void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage
 		//safety limits
 		if ((capacitor_energy < MINIMUM_CAPACITOR_ENERGY) && (target_power < 0.0f)) {
 			target_power = 0.0f;
+			global_clip_reason += 4;
 		}
 		if ((cap_voltage > CAPACITOR_VOLTAGE_MAX) && (target_power > 0.0f)) {
 			target_power = 0.0f;
+			global_clip_reason += 8;
 		}
 		if((target_power > 0) && (target_power > MAX_CHARGE_CURRENT * cap_voltage)){
 			target_power = MAX_CHARGE_CURRENT * cap_voltage;
+			global_clip_reason += 16;
 		}
 		if((target_power < 0) && (-target_power > MAX_DISCHARGE_CURRENT * cap_voltage)){
 			target_power = -MAX_DISCHARGE_CURRENT * cap_voltage;
+			global_clip_reason += 32;
 		}
 
-		float final_duty = Process_Dynamic_Power_Tracking(target_power, capacitor_power);
-
-		/* --- Apply PWM --- */
-		if (final_duty > MAX_DUTY_CYCLE) final_duty = MAX_DUTY_CYCLE;
-		if (final_duty < MIN_DUTY_CYCLE) final_duty = MIN_DUTY_CYCLE;
-
-		uint32_t ccr_value = (uint32_t)(final_duty * 1919.0f);
-		if( target_power > 0){//charging
-			TIM1->CCR1 = ccr_value;
-			TIM3->CCR4 = 1880;
-		}
-		else{ //discharging
-			TIM1->CCR1 = 0;
-			TIM3->CCR4 = 1919 - ccr_value;
-		}
+		float control_effort = Process_Dynamic_Power_Tracking(target_power, capacitor_power);
+		PowerStage_SetPhaseSystem(target_power, fabsf(control_effort));
 		PowerStage_Enable(1);
 	}
 }
@@ -360,8 +386,14 @@ int main(void)
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 2);
   HAL_ADC_Start_DMA(&hadc2, (uint32_t*)adc2_buffer, 3);
 
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS);
+  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS);
+
+  // 2. Start internal master link channel
+  HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_2);
+
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4); //for duty cycle
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
 
   VOFA_Init();
 

@@ -44,6 +44,10 @@ extern "C" {
 #define IMOTOR_DEADBAND_AMPS 0.05f //currents below this value are just converted to 0 for readability
 #define FILTER_ALPHA 0.1f //how much to use current value compared to old value in filtering
 
+/* ---------------- Timers ---------------- */
+#define CENTER_ALIGNED_MAX_REG   1919U
+#define HALF_DUTY_TICKS          960U     // 50% Duty Cycle point
+
 
 #ifdef __cplusplus
 }
