@@ -470,8 +470,9 @@ int main(void)
     i_motor_current_raw = INA240_VoltageToCurrent(v_pa6);
 
     /* Reconstruct cap voltage (with filtering) */
-    float instant_vcap = (v_pa2 < ADC_ZERO_CLAMP_V) ? 0.0f : (v_pa2 * CAP_SENSE_GAIN);
-    cap_voltage_raw = (FILTER_ALPHA * instant_vcap) + ((1.0f - FILTER_ALPHA) * cap_voltage_raw);
+//    float instant_vcap = (v_pa2 < ADC_ZERO_CLAMP_V) ? 0.0f : (v_pa2 * CAP_SENSE_GAIN);
+    //cap_voltage_raw = (FILTER_ALPHA * instant_vcap) + ((1.0f - FILTER_ALPHA) * cap_voltage_raw);
+    cap_voltage_raw = (v_pa2 < ADC_ZERO_CLAMP_V) ? 0.0f : (v_pa2 * CAP_SENSE_GAIN);
 
     /* Convert INA240 outputs to current (with filtering) */
     float instant_ibat = INA240_VoltageToCurrent(v_pc0);
