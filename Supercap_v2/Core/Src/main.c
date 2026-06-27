@@ -62,11 +62,11 @@ typedef struct
 
 float dynamic_vref;
 
-uint16_t adc1_buffer[2] = {0U, 0U}; //holds adc values for motor current and bus voltage
+uint16_t adc1_buffer[5] = {0U, 0U, 0U, 0U, 0U}; //holds adc values for motor current and bus voltage
 // Index 0 = PC0 (IBUS)
 // Index 1 = PA2 (VCAP)
 // Index 2 = PA3 (ICAP)
-uint16_t adc2_buffer[3] = {0U, 0U, 0U};
+//uint16_t adc2_buffer[3] = {0U, 0U, 0U};
 float power_integral = 0.0f;
 float global_phase;
 float global_control_effort;
@@ -384,7 +384,6 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_ADC1_Init();
-  MX_ADC2_Init();
   MX_FDCAN2_Init();
   MX_UART4_Init();
   MX_TIM2_Init();
@@ -395,13 +394,12 @@ int main(void)
   
   //SCB_InvalidateDCache_by_Addr((uint32_t*)adc1_buffer, sizeof(adc1_buffer));
   //SCB_InvalidateDCache_by_Addr((uint32_t*)adc2_buffer, sizeof(adc2_buffer));
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 2);
-  HAL_ADC_Start_DMA(&hadc2, (uint32_t*)adc2_buffer, 3);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
 
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS);
   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS);
-
   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
+
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
 
   // 2. Start internal master link channel
@@ -409,26 +407,22 @@ int main(void)
 
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
+  htim1.Instance->EGR = TIM_EGR_UG;
+  htim3.Instance->EGR = TIM_EGR_UG;
+
+  __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR | ADC_FLAG_EOC);
+
   HAL_TIM_Base_Start(&htim3);
 
   HAL_TIM_Base_Start(&htim1);
 
   __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
-    htim1.Instance->EGR = TIM_EGR_UG;
-    htim3.Instance->EGR = TIM_EGR_UG;
 
   if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
       // If execution hits this block, the ADC detected a collision.
       // Clearing it forces a reset of the status flags:
       __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
-      HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 2);
-  }
-
-  if (__HAL_ADC_GET_FLAG(&hadc2, ADC_FLAG_OVR)) {
-      // If execution hits this block, the ADC detected a collision.
-      // Clearing it forces a reset of the status flags:
-      __HAL_ADC_CLEAR_FLAG(&hadc2, ADC_FLAG_OVR);
-      HAL_ADC_Start_DMA(&hadc2, (uint32_t*)adc2_buffer, 3);
+      HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
   }
 
 
@@ -450,9 +444,9 @@ int main(void)
     uint16_t raw_imotor = adc1_buffer[0]; // Channel 1 (PA6)
     uint16_t raw_vbus   = adc1_buffer[1]; // Channel 2 (PC4)
 
-    uint16_t raw_ibus = adc2_buffer[0];
-    uint16_t raw_vcap = adc2_buffer[1];
-    uint16_t raw_icap = adc2_buffer[2];
+    uint16_t raw_ibus = adc1_buffer[2];
+    uint16_t raw_vcap = adc1_buffer[3];
+    uint16_t raw_icap = adc1_buffer[4];
 
     HAL_ADC_Start(&hadc3);
     if (HAL_ADC_PollForConversion(&hadc3, 10) == HAL_OK)
