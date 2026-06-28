@@ -478,68 +478,25 @@ int main(void)
   MX_ADC3_Init();
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
-  
-  // ====================================================================
-      // 1. HARDWARE MODE SETUP (Edge-Aligned, Master/Slave Trigger)
-      // ====================================================================
-      TIM1->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
-      TIM3->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
 
-      // 2. FORCE CHANNELS TO PWM MODE 1 (Output Compare Mode bits = 110)
-      // TIM1 Channel 1 (OC1M bits in CCMR1)
-      TIM1->CCMR1 &= ~TIM_CCMR1_OC1M;
-      TIM1->CCMR1 |= (TIM_CCMR1_OC1M_2 | TIM_CCMR1_OC1M_1); // 110: PWM Mode 1
-      TIM1->CCMR1 |= TIM_CCMR1_OC1PE;                       // Enable Preload
+  // 1. Arm both timer channels (Pins are active, but counting is halted)
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
 
-      // TIM3 Channel 4 (OC4M bits in CCMR2)
-      TIM3->CCMR2 &= ~TIM_CCMR2_OC4M;
-      TIM3->CCMR2 |= (TIM_CCMR2_OC4M_2 | TIM_CCMR2_OC4M_1); // 110: PWM Mode 1
-      TIM3->CCMR2 |= TIM_CCMR2_OC4PE;                       // Enable Preload
+  // 2. Set the baseline shift (The Conduction Window)
+  // TIM1 stays at 1919 (50% centerpoint)
+  // TIM3 shifts to 1200 (opens the charging window)
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1919); //keep
+  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 300);
 
-      // Enable physical pin outputs in CCER
-      TIM1->CCER &= ~TIM_CCER_CC1P; // Active HIGH
-      TIM1->CCER |= TIM_CCER_CC1E;  // Enable Pin
-      TIM3->CCER &= ~TIM_CCER_CC4P; // Active HIGH
-      TIM3->CCER |= TIM_CCER_CC4E;  // Enable Pin
+  // 3. Force shadow registers to latch immediately
+  TIM1->EGR = TIM_EGR_UG;
+  TIM3->EGR = TIM_EGR_UG;
 
-      // 3. MASTER/SLAVE TRIGGER LINK
-      TIM1->CR2 &= ~TIM_CR2_MMS;
-      TIM1->CR2 |= TIM_CR2_MMS_0;      // MMS = 001 (Counter Enable is TRGO)
-
-      TIM3->SMCR &= ~TIM_SMCR_SMS;
-      TIM3->SMCR |= (TIM_SMCR_SMS_2 | TIM_SMCR_SMS_1); // SMS = 110 (Trigger Mode)
-
-      // ====================================================================
-      // 4. TELEMETRY & VALUES
-      // ====================================================================
-      HAL_ADC_Stop_DMA(&hadc1);
-      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR | ADC_FLAG_EOC | ADC_FLAG_EOS);
-      HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
-
-      // Initial Test Coordinates: Baseline vs. Clear Shift Window
-      TIM1->CCR1 = 1919;
-      TIM3->CCR4 = 1000; // Open a distinct 919-tick window immediately
-
-      // Force values into active shadow registers
-      TIM1->EGR = TIM_EGR_UG;
-      TIM3->EGR = TIM_EGR_UG;
-
-      TIM1->CNT = 0;
-      TIM3->CNT = 0;
-
-      __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
-      __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
-      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
-
-      // ====================================================================
-      // 5. HARDWARE LAUNCH
-      // ====================================================================
-      TIM1->CR1 |= TIM_CR1_CEN; // Launch master; slave starts instantly
-
-      if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
-          __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
-      }
-
+  // 4. THE MASTER LAUNCH
+  // Starting the master (TIM1) initiates the ITR0 pulse,
+  // which hardware-triggers TIM3 to start on the exact same clock edge.
+  HAL_TIM_Base_Start(&htim1);
 
   VOFA_Init();
   HAL_TIM_Base_Start_IT(&htim4); //for power calculation
@@ -549,9 +506,9 @@ int main(void)
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
   HAL_Delay(200);
 
-  if(NEW_FREQ){
-	  Change_HBridge_Frequency(3838, 0);//3838
-  }
+//  if(NEW_FREQ){
+//	  Change_HBridge_Frequency(3838, 0);//3838
+//  }
 
   /* USER CODE END 2 */
 
