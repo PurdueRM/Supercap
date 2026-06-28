@@ -480,6 +480,10 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   // 1. Arm both timer channels (Pins are active, but counting is halted)
+
+  __HAL_TIM_CLEAR_IT(&htim1, TIM_IT_UPDATE);
+  __HAL_TIM_CLEAR_IT(&htim3, TIM_IT_UPDATE);
+
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
 
