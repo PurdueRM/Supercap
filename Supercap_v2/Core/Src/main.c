@@ -484,24 +484,14 @@ int main(void)
   __HAL_TIM_CLEAR_IT(&htim1, TIM_IT_UPDATE);
   __HAL_TIM_CLEAR_IT(&htim3, TIM_IT_UPDATE);
 
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
-
-  // 2. Set the baseline shift (The Conduction Window)
-  // TIM1 stays at 1919 (50% centerpoint)
-  // TIM3 shifts to 1200 (opens the charging window)
   TIM1->CCR1 = 1000;
   TIM3->CCR4 = 3800;
 
-  // 3. Force shadow registers to latch immediately
   TIM1->EGR = TIM_EGR_UG;
   TIM3->EGR = TIM_EGR_UG;
 
-  // 4. THE MASTER LAUNCH
-  // Starting the master (TIM1) initiates the ITR0 pulse,
-  // which hardware-triggers TIM3 to start on the exact same clock edge.
-  HAL_TIM_Base_Start(&htim1);
-
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
   VOFA_Init();
   HAL_TIM_Base_Start_IT(&htim4); //for power calculation
