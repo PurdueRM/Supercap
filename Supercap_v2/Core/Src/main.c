@@ -365,7 +365,14 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     //1000: cahrging very slowly
     //1100:nothing
     //900: charging, slower than 1000
-    //1050:
+    //1050:???
+
+    //200: discharging
+    //1000: Discharging very slow
+    //1600: nothing/ barely charging
+    //2000:slow
+    //2500: Discharging
+    //2100: charging slowly
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
@@ -442,35 +449,23 @@ void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage
 
 void Change_HBridge_Frequency(uint32_t new_arr, uint32_t tick_offset)
 {
-    // 1. Calculate new 50% duty cycle and scale the phase offset
+    // 1. Calculate new 50% duty cycle (ARR / 2 for center-aligned mode)
+    // For new_arr = 3838, new_ccr will be 1919
     uint32_t new_ccr = new_arr / 2;
+
+    // 2. Scale the phase offset relative to the new ARR runway
     float scale_factor = (float)new_arr / (float)TIM1->ARR;
     uint32_t new_offset = (uint32_t)((float)tick_offset * scale_factor);
-    tick_offset = new_offset;
 
-    // 2. Disable the main counter loops
-    TIM1->CR1 &= ~TIM_CR1_CEN;
-    TIM3->CR1 &= ~TIM_CR1_CEN;
-
-    // 3. Directly update the ARR and CCR registers
+    // 3. Update the ARR shadow registers while running
+    // The hardware will hold these values until the next natural update event
     TIM1->ARR = new_arr;
     TIM3->ARR = new_arr;
 
+    // 4. Update the Duty Cycle and Phase Offset shadow channels
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, new_ccr);         // Left Leg
     __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, new_ccr);         // Right Leg
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, tick_offset);     // Internal Phase Bridge
-
-    // 4. Force a hardware re-alignment
-    // This resets both internal counters to 0 and preloads the new registers
-    TIM1->EGR = TIM_EGR_UG;
-
-    // 5. Clear the update flags so we don't accidentally trip an interrupt right away
-    __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
-    __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
-
-    // 6. Restart the counters (Turn on the Slave first, then the Master)
-    TIM3->CR1 |= TIM_CR1_CEN;
-    TIM1->CR1 |= TIM_CR1_CEN;
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, new_offset);      // Sync Phase Shift Engine
 }
 /* USER CODE END 0 */
 
@@ -513,7 +508,6 @@ int main(void)
   MX_ADC1_Init();
   MX_FDCAN2_Init();
   MX_UART4_Init();
-  MX_TIM2_Init();
   MX_TIM3_Init();
   MX_TIM1_Init();
   MX_ADC3_Init();
@@ -528,9 +522,11 @@ int main(void)
     HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
 
     // 2. Set identical 50% duty cycles and initial baseline tick_offset (e.g., 700)
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS);
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS);
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS); // 1919
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS); // 1919
+
+        // Use a small baseline offset (e.g., 200) instead of 0 to clear center-aligned dead zones
+     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 200);
 
     // 3. Enable Preload (Shadowing) explicitly so future updates are synchronous
     htim1.Instance->CR1 |= TIM_CR1_ARPE;
@@ -560,7 +556,9 @@ int main(void)
 
     // 9. Post-start ADC safety check
     if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
-        __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
+    	__HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
+        // Restart DMA if the master initialization transient caused an overrun
+        HAL_ADC_Stop_DMA(&hadc1);
         HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
     }
 
