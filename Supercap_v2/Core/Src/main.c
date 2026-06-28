@@ -327,6 +327,15 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     //2900:nothing
     //2825: nothing
     //2790:discharging slowly
+
+    //2800:nothing
+    //1500: Discharging
+    //500: discharging quickly
+    //2500: staying same
+    //2100: charging slowly
+    //2000: charging slowly
+    //2200: charging very slowly
+    //2050: nothing
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
@@ -480,7 +489,7 @@ int main(void)
     __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS); // 1919
 
         // Use a small baseline offset (e.g., 200) instead of 0 to clear center-aligned dead zones
-     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 200);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
 
     // 3. Enable Preload (Shadowing) explicitly so future updates are synchronous
     htim1.Instance->CR1 |= TIM_CR1_ARPE;
