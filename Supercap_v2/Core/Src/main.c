@@ -314,9 +314,9 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 550);  //charging slowly
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 500);  //not charging
 
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1919);
+   // __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1919);
 
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 2400);
+    //__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 2400);
 
 
     //500: charging well
@@ -332,7 +332,12 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
 
 
     //6V: duty
-    //
+    // 2400: discharging very slowly
+    //1200: charging incredibly slowly
+    //500: nothing
+    //250: nothing
+
+    //2500, 500:nothing
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
@@ -475,69 +480,38 @@ int main(void)
   /* USER CODE BEGIN 2 */
   
   // ====================================================================
-      // 1. HARDWARE MODE SETUP (Edge-Aligned, Free-Running)
+      // 1. HARDWARE MODE SETUP (Single Timer Asymmetric PWM)
       // ====================================================================
+      // Set TIM1 to standard Edge-Aligned, Up-Counting Mode
       TIM1->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
-      TIM3->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
 
-      // Keep active-high polarities clean and matching
-      TIM1->CCER &= ~TIM_CCER_CC1P;
-      TIM3->CCER &= ~TIM_CCER_CC4P;
+      // Configure TIM1 Channel 1 and Channel 2 to Asymmetric PWM Mode 1
+      // OC1M = 1110 (Asymmetric PWM mode 1)
+      TIM1->CCMR1 &= ~(TIM_CCMR1_OC1M | TIM_CCMR1_OC2M);
+      TIM1->CCMR1 |= (TIM_CCMR1_OC1M_2 | TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_0); // CH1 Mode
+      TIM1->CCMR1 |= (TIM_CCMR1_OC2M_2 | TIM_CCMR1_OC2M_1 | TIM_CCMR1_OC2M_0); // CH2 Mode
 
-      // Disconnect all master/slave trigger hardware to protect the ADC/DMA
-      TIM1->CR2 &= ~TIM_CR2_MMS;
-      TIM3->SMCR &= ~TIM_SMCR_SMS;
+      // Ensure outputs are enabled and active HIGH
+      TIM1->CCER &= ~(TIM_CCER_CC1P | TIM_CCER_CC2P);
+      TIM1->CCER |= (TIM_CCER_CC1E | TIM_CCER_CC2E);
 
-      // ====================================================================
-      // 2. SAFE TELEMETRY RESET
-      // ====================================================================
-      HAL_ADC_Stop_DMA(&hadc1);
-      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR | ADC_FLAG_EOC | ADC_FLAG_EOS);
-      HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
-
-      // Set initial matching 50% duty cycles
-      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS); // 1919
-      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS); // 1919
-
-      htim1.Instance->CR1 |= TIM_CR1_ARPE;
-      htim3.Instance->CR1 |= TIM_CR1_ARPE;
-
-      // Enable the output channels without turning on the clocks yet
-      HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
-      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-
-      // Force shadow register updates
-      htim1.Instance->EGR = TIM_EGR_UG;
-      htim3.Instance->EGR = TIM_EGR_UG;
-
-      // Explicitly turn OFF both counters to prep for a synchronized launch
-      TIM1->CR1 &= ~TIM_CR1_CEN;
+      // Completely disable TIM3 to pull it out of the equation
       TIM3->CR1 &= ~TIM_CR1_CEN;
 
-      // Reset both counter registers to absolute 0
-      TIM1->CNT = 0;
-      TIM3->CNT = 0;
-
-      // Clear any transient artifacts
-      __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
-      __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
-      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
-
-      // OPTIONAL: Only uncomment if your TIM1 ISR clears the update flag!
-      // __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
-
       // ====================================================================
-      // 3. SYNCHRONOUS SOFTWARE LAUNCH
+      // 2. RUNTIME CONTROL REGISTERS
       // ====================================================================
-      // This turns on both timer clocks in the exact same CPU instruction execution
-      __disable_irq();
-      TIM1->CR1 |= TIM_CR1_CEN;
-      TIM3->CR1 |= TIM_CR1_CEN;
-      __enable_irq();
+      // CH1 defines the leading edge (Turn-ON phase shift)
+      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 500);
 
-      if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
-          __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
-      }
+      // CH2 defines the trailing edge (Turn-OFF phase shift)
+      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 2500);
+
+      // Force hardware execution
+      TIM1->Instance->EGR = TIM_EGR_UG;
+      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
+      HAL_TIM_Base_Start(&htim1);
 
 
   VOFA_Init();
