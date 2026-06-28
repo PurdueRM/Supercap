@@ -502,6 +502,7 @@ int main(void)
   // which hardware-triggers TIM3 to start on the exact same clock edge.
   HAL_TIM_Base_Start(&htim1);
 
+
   VOFA_Init();
   HAL_TIM_Base_Start_IT(&htim4); //for power calculation
 
