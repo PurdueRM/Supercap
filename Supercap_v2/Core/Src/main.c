@@ -340,6 +340,13 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     //1500: Discharging
     //1750: Discharging
     //2500: discharging
+
+    //new freq type:
+    //200: charging very slowly
+    //300: charging very slowly
+    //400: nothing, discharging very slowly
+    //100: very very slowly charging
+    //250:very very slowly charging
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
