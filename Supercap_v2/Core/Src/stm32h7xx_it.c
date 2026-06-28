@@ -26,7 +26,8 @@
 
 /* Private typedef -----------------------------------------------------------*/
 /* USER CODE BEGIN TD */
-
+#include "config.h"
+#include "main.h"
 /* USER CODE END TD */
 
 /* Private define ------------------------------------------------------------*/
@@ -56,7 +57,12 @@
 
 /* External variables --------------------------------------------------------*/
 extern DMA_HandleTypeDef hdma_adc1;
+extern TIM_HandleTypeDef htim4;
 /* USER CODE BEGIN EV */
+#define BUFFER_SIZE 10  // 10 samples * 10ms interrupt = 100ms time delta
+extern float energy_buffer[BUFFER_SIZE];
+extern uint8_t buffer_index;
+extern float current_power_watts;
 
 /* USER CODE END EV */
 
@@ -210,6 +216,31 @@ void DMA1_Stream0_IRQHandler(void)
   /* USER CODE BEGIN DMA1_Stream0_IRQn 1 */
 
   /* USER CODE END DMA1_Stream0_IRQn 1 */
+}
+
+/**
+  * @brief This function handles TIM4 global interrupt.
+  */
+void TIM4_IRQHandler(void)
+{
+  /* USER CODE BEGIN TIM4_IRQn 0 */
+
+  /* USER CODE END TIM4_IRQn 0 */
+  HAL_TIM_IRQHandler(&htim4);
+  /* USER CODE BEGIN TIM4_IRQn 1 */
+  float current_energy = 0.5f * CAPACITANCE_TOTAL * cap_voltage * cap_voltage;
+
+  // 2. Extract the old energy from exactly 100ms ago
+  float old_energy = energy_buffer[buffer_index];
+
+  // 3. Calculate Power: P = dE / dt (dt = 100ms = 0.1 seconds)
+  current_power_watts = (current_energy - old_energy) / 1.0f;
+
+  // 4. Overwrite the oldest sample with the newest one and advance the ring
+  energy_buffer[buffer_index] = current_energy;
+  buffer_index = (buffer_index + 1) % BUFFER_SIZE;
+
+  /* USER CODE END TIM4_IRQn 1 */
 }
 
 /* USER CODE BEGIN 1 */

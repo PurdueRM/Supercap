@@ -8,6 +8,7 @@ extern "C" {
 /* ---------------- Power Limit ---------------- */
 #define POWER_LIMIT 45 // in W, this should be read from a CAN message
 #define ref_system_indicates_off 0 //should be removed once CAN is setup
+#define NEW_FREQ 0
 
 /* ---------------- Safety ---------------- */
 #define MINIMUM_CAPACITOR_ENERGY 450.0f // The energy value the capacitor should never go under (Joules)

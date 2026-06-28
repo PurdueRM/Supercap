@@ -56,6 +56,7 @@ typedef struct
     float phase;
     float control_effort;
     float clip_reason;
+    float current_power;
     uint32_t tail;
 } VofaData_t;
 #pragma pack(pop)
@@ -83,7 +84,6 @@ float global_clip_reason;
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-
 VofaData_t g_vofa_frame;
 SystemState_t current_state = SYSTEM_OFF;
 
@@ -140,6 +140,13 @@ float ABSF(float x);
 
 uint32_t DutyPermilleToCompare(TIM_HandleTypeDef *htim, uint32_t duty_permille);
 
+//for power calc
+#define BUFFER_SIZE 10  // 10 samples * 10ms interrupt = 100ms time delta
+float energy_buffer[BUFFER_SIZE] = {0};
+uint8_t buffer_index = 0;
+float current_power_watts = 0.0f;
+//end power calc
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -173,6 +180,7 @@ void VOFA_Init(void)
     g_vofa_frame.phase = 0.0f;
     g_vofa_frame.control_effort = 0.0f;
     g_vofa_frame.clip_reason = 0.0f;
+    g_vofa_frame.current_power = 0.0f;
     g_vofa_frame.tail    = 0x7F800000;
 }
 
@@ -187,6 +195,7 @@ void VOFA_UpdateData(void)
     g_vofa_frame.phase = global_phase;
     g_vofa_frame.control_effort = global_control_effort;
     g_vofa_frame.clip_reason = global_clip_reason;
+    g_vofa_frame.current_power = current_power_watts;
     g_vofa_frame.tail    = 0x7F800000;
 
     global_clip_reason = 0.0f;
@@ -301,7 +310,8 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
 //    }
     current_state = 1;
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1919);  //discharged somewhat fast
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 700);  //discharged somewhat fast
+//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 700);  //charging very slowly
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 550);  //??
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
@@ -348,6 +358,31 @@ void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage
 		PowerStage_Enable(1);
 	}
 }
+
+
+void Change_HBridge_Frequency(uint32_t new_arr, uint32_t old_phase)
+{
+    // 1. Calculate the new 50% duty cycle value
+    uint32_t new_ccr = new_arr / 2;
+
+    // 2. Scale your active phase offset to match the new timeline
+    float scale_factor = (float)new_arr / (float)TIM1->ARR;
+    uint32_t new_offset = (uint32_t)((float)old_phase * scale_factor);
+
+    // 3. Update the global phase tracker variable
+    old_phase = new_offset;
+
+    // 4. Write to the Preload registers for the new timeline
+    TIM1->ARR = new_arr;
+    TIM3->ARR = new_arr;
+
+    // 5. Update the actual active driving channels to 50% duty cycle
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, new_ccr); // Left Leg driving channel
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, new_ccr); // Right Leg driving channel
+
+    // 6. Update the internal hardware bridge to the new scaled phase offset
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, old_phase);
+}
 /* USER CODE END 0 */
 
 /**
@@ -393,48 +428,65 @@ int main(void)
   MX_TIM3_Init();
   MX_TIM1_Init();
   MX_ADC3_Init();
+  MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   
+
   //SCB_InvalidateDCache_by_Addr((uint32_t*)adc1_buffer, sizeof(adc1_buffer));
   //SCB_InvalidateDCache_by_Addr((uint32_t*)adc2_buffer, sizeof(adc2_buffer));
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
+  // 1. Clear any latent ADC flags and start DMA
+    __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR | ADC_FLAG_EOC | ADC_FLAG_EOS);
+    HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
 
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS);
-  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS);
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
+    // 2. Set identical 50% duty cycles and initial baseline tick_offset (e.g., 700)
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS);
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS);
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
 
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
+    // 3. Enable Preload (Shadowing) explicitly so future updates are synchronous
+    htim1.Instance->CR1 |= TIM_CR1_ARPE;
+    htim3.Instance->CR1 |= TIM_CR1_ARPE;
 
-  // 2. Start internal master link channel
-  HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_2);
+    // 4. Start PWM/OC channels (this prepares the routing channels, doesn't start counting yet)
+    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
+    HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_2);
+    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+    // 5. Force ONE synchronized reset of the Master.
+    // Master TRGO will automatically force the Slave (TIM3) to update in perfect hardware lock-step.
+    htim1.Instance->EGR = TIM_EGR_UG;
 
-  htim1.Instance->EGR = TIM_EGR_UG;
-  htim3.Instance->EGR = TIM_EGR_UG;
+    // 6. Clear any flag artifacts caused by the manual update generation
+    __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
+    __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
+    __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
 
-  __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR | ADC_FLAG_EOC);
+    // 7. Enable Update Interrupts
+    __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
 
-  HAL_TIM_Base_Start(&htim3);
+    // 8. Start SLAVE base first, then MASTER base.
+    // The moment TIM1 starts, TIM3 will track its phase perfectly.
+    HAL_TIM_Base_Start(&htim3);
+    HAL_TIM_Base_Start(&htim1);
 
-  HAL_TIM_Base_Start(&htim1);
-
-  __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
-
-  if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
-      // If execution hits this block, the ADC detected a collision.
-      // Clearing it forces a reset of the status flags:
-      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
-      HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
-  }
+    // 9. Post-start ADC safety check
+    if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
+        __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
+        HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
+    }
 
 
   VOFA_Init();
+  HAL_TIM_Base_Start_IT(&htim4); //for power calculation
 
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
   HAL_Delay(200);
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
   HAL_Delay(200);
+
+  if(NEW_FREQ){
+	  Change_HBridge_Frequency(3838, 0);//3838
+  }
 
   /* USER CODE END 2 */
 
