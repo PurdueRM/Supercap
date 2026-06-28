@@ -486,8 +486,8 @@ int main(void)
   // 2. Set the baseline shift (The Conduction Window)
   // TIM1 stays at 1919 (50% centerpoint)
   // TIM3 shifts to 1200 (opens the charging window)
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1919); //keep
-  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 300);
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
+  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 3800);
 
   // 3. Force shadow registers to latch immediately
   TIM1->EGR = TIM_EGR_UG;
