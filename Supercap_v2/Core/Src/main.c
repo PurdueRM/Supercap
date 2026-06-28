@@ -314,9 +314,9 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 550);  //charging slowly
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 500);  //not charging
 
-   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1919);
+   //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1919);
 
-   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 1000);
+   //__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 1000);
 
 
     //500: charging well
@@ -485,63 +485,61 @@ int main(void)
       TIM1->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
       TIM3->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
 
-      // Matching active-high polarities
-      TIM1->CCER &= ~TIM_CCER_CC1P;
-      TIM3->CCER &= ~TIM_CCER_CC4P;
+      // 2. FORCE CHANNELS TO PWM MODE 1 (Output Compare Mode bits = 110)
+      // TIM1 Channel 1 (OC1M bits in CCMR1)
+      TIM1->CCMR1 &= ~TIM_CCMR1_OC1M;
+      TIM1->CCMR1 |= (TIM_CCMR1_OC1M_2 | TIM_CCMR1_OC1M_1); // 110: PWM Mode 1
+      TIM1->CCMR1 |= TIM_CCMR1_OC1PE;                       // Enable Preload
 
-      // Set TIM1 TRGO to emit on ENABLE (Master launchpad)
+      // TIM3 Channel 4 (OC4M bits in CCMR2)
+      TIM3->CCMR2 &= ~TIM_CCMR2_OC4M;
+      TIM3->CCMR2 |= (TIM_CCMR2_OC4M_2 | TIM_CCMR2_OC4M_1); // 110: PWM Mode 1
+      TIM3->CCMR2 |= TIM_CCMR2_OC4PE;                       // Enable Preload
+
+      // Enable physical pin outputs in CCER
+      TIM1->CCER &= ~TIM_CCER_CC1P; // Active HIGH
+      TIM1->CCER |= TIM_CCER_CC1E;  // Enable Pin
+      TIM3->CCER &= ~TIM_CCER_CC4P; // Active HIGH
+      TIM3->CCER |= TIM_CCER_CC4E;  // Enable Pin
+
+      // 3. MASTER/SLAVE TRIGGER LINK
       TIM1->CR2 &= ~TIM_CR2_MMS;
       TIM1->CR2 |= TIM_CR2_MMS_0;      // MMS = 001 (Counter Enable is TRGO)
 
-      // Set TIM3 to TRIGGER MODE (Waits for Master TRGO)
       TIM3->SMCR &= ~TIM_SMCR_SMS;
       TIM3->SMCR |= (TIM_SMCR_SMS_2 | TIM_SMCR_SMS_1); // SMS = 110 (Trigger Mode)
 
       // ====================================================================
-      // 2. STABLE TELEMETRY RESET
+      // 4. TELEMETRY & VALUES
       // ====================================================================
       HAL_ADC_Stop_DMA(&hadc1);
       __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR | ADC_FLAG_EOC | ADC_FLAG_EOS);
       HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
 
-      // Set identical 50% baseline duty cycles
-      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS); // 1919
-      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS); // 1919
+      // Initial Test Coordinates: Baseline vs. Clear Shift Window
+      TIM1->CCR1 = 1919;
+      TIM3->CCR4 = 1000; // Open a distinct 919-tick window immediately
 
-      // Preload enabled
-      TIM1->CR1 |= TIM_CR1_ARPE;
-      TIM3->CR1 |= TIM_CR1_ARPE;
-
-      // ====================================================================
-      // 3. MANUAL CHANNEL ENABLE (Bypassing HAL's premature CEN activation)
-      // ====================================================================
-      TIM1->CCER |= TIM_CCER_CC1E; // Enable TIM1 Channel 1 output pin
-      TIM3->CCER |= TIM_CCER_CC4E; // Enable TIM3 Channel 4 output pin
-
-      // Force shadow registers to load values safely
+      // Force values into active shadow registers
       TIM1->EGR = TIM_EGR_UG;
       TIM3->EGR = TIM_EGR_UG;
 
-      // Reset counters to 0
       TIM1->CNT = 0;
       TIM3->CNT = 0;
 
-      // Clear flags
       __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
       __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
       __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
 
       // ====================================================================
-      // 4. THE HARDWARE LAUNCH
+      // 5. HARDWARE LAUNCH
       // ====================================================================
-      // We ONLY enable the master counter.
-      // TIM1 will instantly assert TRGO, waking up TIM3 in the exact same clock cycle.
-      TIM1->CR1 |= TIM_CR1_CEN;
+      TIM1->CR1 |= TIM_CR1_CEN; // Launch master; slave starts instantly
 
-      // Clear any quick startup transients
       if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
           __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
       }
+
 
   VOFA_Init();
   HAL_TIM_Base_Start_IT(&htim4); //for power calculation
