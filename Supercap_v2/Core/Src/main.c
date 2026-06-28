@@ -508,7 +508,7 @@ int main(void)
       __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 2500);
 
       // Force hardware execution
-      TIM1->Instance->EGR = TIM_EGR_UG;
+      TIM1->EGR = TIM_EGR_UG;
       HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
       HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
       HAL_TIM_Base_Start(&htim1);
