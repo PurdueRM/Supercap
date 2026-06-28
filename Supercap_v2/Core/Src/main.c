@@ -319,7 +319,14 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     //3000: nothing
 
 
-    //
+    //200 discharged quick
+    //2800 charging somewhat slowly, but could be worse
+    //3200: charging slower
+    //2400: discharging
+    //2700: discharging very slowly
+    //2900:nothing
+    //2825: nothing
+    //2790:discharging slowly
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
@@ -509,7 +516,7 @@ int main(void)
         HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
     }
 
-    htim3.Instance->CCER |= TIM_CCER_CC4P;
+    htim1.Instance->CCER |= TIM_CCER_CC1P;//;htim3.Instance->CCER |= TIM_CCER_CC4P;
 
 
   VOFA_Init();
