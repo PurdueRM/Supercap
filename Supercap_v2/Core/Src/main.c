@@ -313,29 +313,7 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
 //    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 700);  //charging very slowly
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 550);  //charging slowly
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 500);  //not charging
-    //200: discharging quickly
-    //1000: discharging slowly
-    //2000: same
-    //3000: nothing
 
-
-    //200 discharged quick
-    //2800 charging somewhat slowly, but could be worse
-    //3200: charging slower
-    //2400: discharging
-    //2700: discharging very slowly
-    //2900:nothing
-    //2825: nothing
-    //2790:discharging slowly
-
-    //2800:nothing
-    //1500: Discharging
-    //500: discharging quickly
-    //2500: staying same
-    //2100: charging slowly
-    //2000: charging slowly
-    //2200: charging very slowly
-    //2050: nothing
 
     //500: charging well
     //300: charging slower
@@ -347,6 +325,17 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     //505: nothing
     //1000: slowly discharging
     //2000: discharging quickly
+
+
+    //6V:
+    //500: nothing
+    //1000: nothing
+    //1400: nothing
+    //1600: nothing
+    //1800: nothing
+    //2500: nothing/ charging extremely slowly
+    //3000: nothing/ charging extremely slowly
+    //3500: nothing
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
@@ -489,55 +478,67 @@ int main(void)
   /* USER CODE BEGIN 2 */
   
 
-  //SCB_InvalidateDCache_by_Addr((uint32_t*)adc1_buffer, sizeof(adc1_buffer));
-  //SCB_InvalidateDCache_by_Addr((uint32_t*)adc2_buffer, sizeof(adc2_buffer));
-  // 1. Clear any latent ADC flags and start DMA
-    __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR | ADC_FLAG_EOC | ADC_FLAG_EOS);
-    HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
+  // ====================================================================
+      // 1. HARDWARE MODE SETUP (Must happen BEFORE starting anything)
+      // ====================================================================
 
-    // 2. Set identical 50% duty cycles and initial baseline tick_offset (e.g., 700)
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS); // 1919
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS); // 1919
+      // Explicitly force both timers to Edge-Aligned, Up-Counting Mode
+      TIM1->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
+      TIM3->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
 
-        // Use a small baseline offset (e.g., 200) instead of 0 to clear center-aligned dead zones
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
+      // Reset both output channels to standard Active-HIGH matching polarity
+      TIM1->CCER &= ~TIM_CCER_CC1P;
+      TIM3->CCER &= ~TIM_CCER_CC4P;
 
-    // 3. Enable Preload (Shadowing) explicitly so future updates are synchronous
-    htim1.Instance->CR1 |= TIM_CR1_ARPE;
-    htim3.Instance->CR1 |= TIM_CR1_ARPE;
+      // Configure TIM1 to emit TRGO on standard UPDATE (when it resets to 0)
+      TIM1->CR2 &= ~TIM_CR2_MMS;
+      TIM1->CR2 |= TIM_CR2_MMS_1;
 
-    // 4. Start PWM/OC channels (this prepares the routing channels, doesn't start counting yet)
-    HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
-    HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_2);
-    HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+      // Configure TIM3 as a Slave in Trigger Mode (Starts counting on TIM1 TRGO)
+      TIM3->SMCR &= ~TIM_SMCR_SMS;
+      TIM3->SMCR |= (TIM_SMCR_SMS_2 | TIM_SMCR_SMS_1);
 
-    // 5. Force ONE synchronized reset of the Master.
-    // Master TRGO will automatically force the Slave (TIM3) to update in perfect hardware lock-step.
-    htim1.Instance->EGR = TIM_EGR_UG;
+      // ====================================================================
+      // 2. COMPARE REGISTER INITIALIZATION
+      // ====================================================================
+      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR | ADC_FLAG_EOC | ADC_FLAG_EOS);
+      HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
 
-    // 6. Clear any flag artifacts caused by the manual update generation
-    __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
-    __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
-    __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
+      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS); // 1919
+      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS); // 1919
 
-    // 7. Enable Update Interrupts
-    __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
+      // Your Phase Control Variable: Start at 0 (Perfect Phase Sync = 0A Idle)
+      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
 
-    // 8. Start SLAVE base first, then MASTER base.
-    // The moment TIM1 starts, TIM3 will track its phase perfectly.
-    HAL_TIM_Base_Start(&htim3);
-    HAL_TIM_Base_Start(&htim1);
+      htim1.Instance->CR1 |= TIM_CR1_ARPE;
+      htim3.Instance->CR1 |= TIM_CR1_ARPE;
 
-    // 9. Post-start ADC safety check
-    if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
-    	__HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
-        // Restart DMA if the master initialization transient caused an overrun
-        HAL_ADC_Stop_DMA(&hadc1);
-        HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
-    }
+      // ====================================================================
+      // 3. STARTING & SYNCHRONIZING
+      // ====================================================================
+      HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
+      HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_2);
+      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
-    htim1.Instance->CCER |= TIM_CCER_CC1P; // Invert Master Leg
-    htim3.Instance->CCER |= TIM_CCER_CC4P; // Invert Slave Leg
+      // Force ONE synchronized master update to lock the slave's starting gate
+      htim1.Instance->EGR = TIM_EGR_UG;
+
+      __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
+      __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
+      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
+
+      __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
+
+      // Start bases
+      HAL_TIM_Base_Start(&htim3);
+      HAL_TIM_Base_Start(&htim1);
+
+      // Post-start ADC safety check
+      if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
+      	__HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
+          HAL_ADC_Stop_DMA(&hadc1);
+          HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
+      }
 
 
   VOFA_Init();
