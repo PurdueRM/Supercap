@@ -490,8 +490,8 @@ int main(void)
   // 2. Set the baseline shift (The Conduction Window)
   // TIM1 stays at 1919 (50% centerpoint)
   // TIM3 shifts to 1200 (opens the charging window)
-  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1000);
-  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 3800);
+  TIM1->CCR1 = 1000;
+  TIM3->CCR4 = 3800;
 
   // 3. Force shadow registers to latch immediately
   TIM1->EGR = TIM_EGR_UG;
@@ -510,6 +510,7 @@ int main(void)
   HAL_Delay(200);
   HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
   HAL_Delay(200);
+  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
 
 //  if(NEW_FREQ){
 //	  Change_HBridge_Frequency(3838, 0);//3838
