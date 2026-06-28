@@ -495,6 +495,7 @@ int main(void)
       TIM3->CCER &= ~TIM_CCER_CC4P;
 
       // ... [Your Section 2: Compare Register Initialization goes here] ...
+      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 200);
 
       // ====================================================================
       // 3. STARTING & SYNCHRONIZING
