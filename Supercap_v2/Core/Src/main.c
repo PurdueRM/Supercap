@@ -312,7 +312,11 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1919);  //discharged somewhat fast
 //    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 700);  //charging very slowly
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 550);  //charging slowly
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 500);  //not charging
+    //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 500);  //not charging
+
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1919);
+
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 2400);
 
 
     //500: charging well
@@ -328,7 +332,9 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
 
 
     //6V:
-    //1200:
+    //500: nothing
+    //1200: nothing
+    //200:
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
@@ -471,36 +477,21 @@ int main(void)
   /* USER CODE BEGIN 2 */
   
 
-  // ====================================================================
-      // 1. CLEAN HARDWARE BASELINE (Edge-Aligned, Up-Counting)
-      // ====================================================================
+  // Explicitly force both timers to Edge-Aligned, Up-Counting Mode
       TIM1->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
       TIM3->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
 
-      // Standard matching active-high polarities
+      // Reset both output channels to standard Active-HIGH matching polarity
       TIM1->CCER &= ~TIM_CCER_CC1P;
       TIM3->CCER &= ~TIM_CCER_CC4P;
 
-      // Disconnect the aggressive Master/Slave Reset link entirely
-      TIM1->CR2 &= ~TIM_CR2_MMS;       // No TRGO generation
-      TIM3->SMCR &= ~TIM_SMCR_SMS;     // Slave mode disabled (TIM3 runs free)
+      // 1. Set TIM1 to emit TRGO on ENABLE (Starts TIM3 at the exact same instant)
+      TIM1->CR2 &= ~TIM_CR2_MMS;       // Clear master mode bits
+      TIM1->CR2 |= TIM_CR2_MMS_0;      // Set MMS to 001: Counter Enable (CNT_EN) is TRGO
 
-      // ====================================================================
-      // 2. STABLE TELEMETRY INITIALIZATION
-      // ====================================================================
-      HAL_ADC_Stop_DMA(&hadc1);
-      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR | ADC_FLAG_EOC | ADC_FLAG_EOS);
-      HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
-
-      // Set fixed reference duty cycles
-      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS); // 1919
-      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS); // 1919
-
-      // Set your phase-shift variable to a safe, stable midrange starting value
-      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1000);
-
-      htim1.Instance->CR1 |= TIM_CR1_ARPE;
-      htim3.Instance->CR1 |= TIM_CR1_ARPE;
+      // 2. Set TIM3 to TRIGGER MODE (Starts counting immediately when TIM1 starts)
+      TIM3->SMCR &= ~TIM_SMCR_SMS;     // Clear slave mode bits
+      TIM3->SMCR |= (TIM_SMCR_SMS_2 | TIM_SMCR_SMS_1); // Set SMS to 110: Trigger Mode
 
       // ====================================================================
       // 3. SAFE STARTUP SEQUENCE
@@ -518,7 +509,7 @@ int main(void)
       __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
 
       // Start both clocks cleanly
-      HAL_TIM_Base_Start(&htim3);
+      //HAL_TIM_Base_Start(&htim3);
       HAL_TIM_Base_Start(&htim1);
 
       // Clear any transient overruns
