@@ -412,26 +412,6 @@ void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage
 //
 //}
 
-void Change_HBridge_Frequency(uint32_t new_arr, uint32_t tick_offset)
-{
-    // 1. Calculate new 50% duty cycle (ARR / 2 for center-aligned mode)
-    // For new_arr = 3838, new_ccr will be 1919
-    uint32_t new_ccr = new_arr / 2;
-
-    // 2. Scale the phase offset relative to the new ARR runway
-    float scale_factor = (float)new_arr / (float)TIM1->ARR;
-    uint32_t new_offset = (uint32_t)((float)tick_offset * scale_factor);
-
-    // 3. Update the ARR shadow registers while running
-    // The hardware will hold these values until the next natural update event
-    TIM1->ARR = new_arr;
-    TIM3->ARR = new_arr;
-
-    // 4. Update the Duty Cycle and Phase Offset shadow channels
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, new_ccr);         // Left Leg
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, new_ccr);         // Right Leg
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, new_offset);      // Sync Phase Shift Engine
-}
 /* USER CODE END 0 */
 
 /**
@@ -479,38 +459,23 @@ int main(void)
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
 
-  // 1. Arm both timer channels (Pins are active, but counting is halted)
-
-  __HAL_TIM_CLEAR_IT(&htim1, TIM_IT_UPDATE);
-  __HAL_TIM_CLEAR_IT(&htim3, TIM_IT_UPDATE);
-
-  TIM1->CCR1 = 1000;
-  TIM3->CCR4 = 3800;
-
-  TIM1->EGR = TIM_EGR_UG;
-  TIM3->EGR = TIM_EGR_UG;
-
-  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
-  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-
-  VOFA_Init();
-  HAL_TIM_Base_Start_IT(&htim4); //for power calculation
-
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_RESET);
-  HAL_Delay(200);
-  HAL_GPIO_WritePin(GPIOE, GPIO_PIN_15, GPIO_PIN_SET);
-  HAL_Delay(200);
+  /* 1. Arm the listener */
   HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
 
-//  if(NEW_FREQ){
-//	  Change_HBridge_Frequency(3838, 0);//3838
-//  }
+  /* 2. Put the Slave at attention */
+  HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
+
+  /* 3. Pull the Master trigger */
+  HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
+  HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_2); /* Starts the TRGO broadcast */
+
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
+  TIM3->CCR4 = 3646;
   while (1)
   {
      /* ===== READ ADCs ===== */
@@ -554,21 +519,6 @@ int main(void)
     float instant_icap = INA240_VoltageToCurrent(v_pa3);
     i_cap_current_raw = (FILTER_ALPHA * instant_icap) + ((1.0f - FILTER_ALPHA) * i_cap_current_raw);
 
-//    if (ABSF(i_motor_current_raw) < IMOTOR_DEADBAND_AMPS)
-//    	{
-//            i_motor_current_raw = 0.0f;
-//        }
-//
-//    if (ABSF(i_cap_current_raw) < ICAP_DEADBAND_AMPS)
-//        {
-//            i_cap_current_raw = 0.0f;
-//        }
-//
-//    if (ABSF(i_bat_current_raw) < IBAT_DEADBAND_AMPS)
-//        {
-//            i_bat_current_raw = 0.0f;
-//        }
-
     bus_voltage      = bus_voltage_raw;
     cap_voltage      = cap_voltage_raw;
     i_motor_current  = i_motor_current_raw;
@@ -578,7 +528,19 @@ int main(void)
     i_cap_protect    = i_cap_current_raw;
 
     /* ===== PARALLEL POWER-SHARING CONTROLLER ===== */
-    PowerSharingControl(bus_voltage, i_bat_current, cap_voltage, i_cap_current, i_motor_current, bus_voltage);
+    //PowerSharingControl(bus_voltage, i_bat_current, cap_voltage, i_cap_current, i_motor_current, bus_voltage);
+
+    float v_cap = cap_voltage;
+
+    // 2. Calculate the Neutral Duty Cycle (ensure 24.0 is a float to prevent integer truncation)
+    float duty_neutral = v_cap / 24.0f;
+
+    // 3. Convert the duty cycle percentage into the actual timer register value
+    uint32_t ccr_neutral = (uint32_t)(duty_neutral * 3838.0f);
+
+    // 4. Now apply your offset to actually move current!
+    // To Charge (push current into the cap)
+    TIM1->CCR1 = ccr_neutral + 75;
 
     /* ===== VOFA telemetry ===== */
     VOFA_UpdateData();

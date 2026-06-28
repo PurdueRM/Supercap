@@ -97,8 +97,6 @@ void MX_TIM1_Init(void)
   sConfigOC.Pulse  = 3000;
   HAL_TIM_OC_ConfigChannel(&htim1, &sConfigOC, TIM_CHANNEL_2);
 
-  HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_2);
-
   /* USER CODE END TIM1_Init 2 */
   HAL_TIM_MspPostInit(&htim1);
 
@@ -120,7 +118,7 @@ void MX_TIM3_Init(void)//entire function has been modified
   if (HAL_TIM_PWM_Init(&htim3) != HAL_OK) Error_Handler();
 
   // Pure Slave Configuration: Listens to TIM1 via ITR0
-  sSlaveConfig.SlaveMode = TIM_SLAVEMODE_TRIGGER;
+  sSlaveConfig.SlaveMode = TIM_SLAVEMODE_RESET;
   sSlaveConfig.InputTrigger = TIM_TS_ITR0;
   sSlaveConfig.TriggerPolarity = TIM_TRIGGERPOLARITY_NONINVERTED;
   sSlaveConfig.TriggerPrescaler = TIM_TRIGGERPRESCALER_DIV1;
