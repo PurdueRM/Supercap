@@ -336,6 +336,9 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     //2500: nothing/ charging extremely slowly
     //3000: nothing/ charging extremely slowly
     //3500: nothing
+
+    //1200:nothing
+    //2000:
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
@@ -482,36 +485,16 @@ int main(void)
       // 1. HARDWARE MODE SETUP (Must happen BEFORE starting anything)
       // ====================================================================
 
-      // Explicitly force both timers to Edge-Aligned, Up-Counting Mode
+  // ====================================================================
+      // 1. INITIAL HARDWARE MODE SETUP (Basic Counting & Duty Cycles)
+      // ====================================================================
       TIM1->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
       TIM3->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
 
-      // Reset both output channels to standard Active-HIGH matching polarity
       TIM1->CCER &= ~TIM_CCER_CC1P;
       TIM3->CCER &= ~TIM_CCER_CC4P;
 
-      // Configure TIM1 to emit TRGO on standard UPDATE (when it resets to 0)
-      TIM1->CR2 &= ~TIM_CR2_MMS;
-      TIM1->CR2 |= TIM_CR2_MMS_1;
-
-      // Configure TIM3 as a Slave in Trigger Mode (Starts counting on TIM1 TRGO)
-      TIM3->SMCR &= ~TIM_SMCR_SMS;
-      TIM3->SMCR |= (TIM_SMCR_SMS_2 | TIM_SMCR_SMS_1);
-
-      // ====================================================================
-      // 2. COMPARE REGISTER INITIALIZATION
-      // ====================================================================
-      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR | ADC_FLAG_EOC | ADC_FLAG_EOS);
-      HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
-
-      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS); // 1919
-      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS); // 1919
-
-      // Your Phase Control Variable: Start at 0 (Perfect Phase Sync = 0A Idle)
-      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
-
-      htim1.Instance->CR1 |= TIM_CR1_ARPE;
-      htim3.Instance->CR1 |= TIM_CR1_ARPE;
+      // ... [Your Section 2: Compare Register Initialization goes here] ...
 
       // ====================================================================
       // 3. STARTING & SYNCHRONIZING
@@ -520,18 +503,30 @@ int main(void)
       HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_2);
       HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
-      // Force ONE synchronized master update to lock the slave's starting gate
+      // Force ONE update event to load the ARR and CCR shadow registers safely
+      // BEFORE linking the hardware reset trigger
       htim1.Instance->EGR = TIM_EGR_UG;
+      htim3.Instance->EGR = TIM_EGR_UG; // Ensure slave preloads too
 
+      // NOW lock the hardware synchronization link together cleanly
+      TIM1->CR2 &= ~TIM_CR2_MMS;
+      TIM1->CR2 |= TIM_CR2_MMS_2;      // MMS = 100 (Compare Match on CC2)
+
+      TIM3->SMCR &= ~TIM_SMCR_SMS;
+      TIM3->SMCR |= TIM_SMCR_SMS_2;    // SMS = 100 (Reset Mode)
+
+      // Clear flags as you perfectly did
       __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
       __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
       __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
 
       __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
 
-      // Start bases
+      // Turn on the clocks!
       HAL_TIM_Base_Start(&htim3);
       HAL_TIM_Base_Start(&htim1);
+
+      // ... [Your Post-start ADC safety check] ...
 
       // Post-start ADC safety check
       if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
