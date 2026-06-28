@@ -311,8 +311,35 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     current_state = 1;
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1919);  //discharged somewhat fast
 //    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 700);  //charging very slowly
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 550);  //charging slowly
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 480);  //charging slowly
+    //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 550);  //charging slowly
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 200);  //not charging
+    //500: not charging
+    //800: Discharging very slowly
+    //700 discharging
+    ///1000: discharging
+    //1250: discharging
+    //100:charging
+    // 50: nothing
+    // 300: nothing
+    //1500: discharging quickly
+    //1750: discharging
+    //600: nothing
+    // 150: charging slowly
+    // 250: charging very slowly
+
+
+    //new freq:
+    //200:nothing
+    //300:very slow charging? (or nothing)
+    //400: nothing/ discharging
+    //500: discharging very slowly
+    //600: discharging
+    //800: nothing
+    //1000: discharging
+    //1200: discharging quickly
+    //1500: Discharging
+    //1750: Discharging
+    //2500: discharging
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
@@ -361,28 +388,63 @@ void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage
 }
 
 
-void Change_HBridge_Frequency(uint32_t new_arr, uint32_t old_phase)
+//void Change_HBridge_Frequency(uint32_t new_arr, uint32_t old_phase)
+//{
+//    // 1. Calculate the new 50% duty cycle value
+//    uint32_t new_ccr = new_arr / 2;
+//
+//    // 2. Scale your active phase offset to match the new timeline
+//    float scale_factor = (float)new_arr / (float)TIM1->ARR;
+//    uint32_t new_offset = (uint32_t)((float)old_phase * scale_factor);
+//
+//    // 3. Update the global phase tracker variable
+//    old_phase = new_offset;
+//
+//    // 4. Write to the Preload registers for the new timeline
+//    TIM1->ARR = new_arr;
+//    TIM3->ARR = new_arr;
+//
+//    // 5. Update the actual active driving channels to 50% duty cycle
+//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, new_ccr); // Left Leg driving channel
+//    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, new_ccr); // Right Leg driving channel
+//
+//    // 6. Update the internal hardware bridge to the new scaled phase offset
+//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, old_phase);
+//
+//
+//}
+
+void Change_HBridge_Frequency(uint32_t new_arr, uint32_t tick_offset)
 {
-    // 1. Calculate the new 50% duty cycle value
+    // 1. Calculate new 50% duty cycle and scale the phase offset
     uint32_t new_ccr = new_arr / 2;
-
-    // 2. Scale your active phase offset to match the new timeline
     float scale_factor = (float)new_arr / (float)TIM1->ARR;
-    uint32_t new_offset = (uint32_t)((float)old_phase * scale_factor);
+    uint32_t new_offset = (uint32_t)((float)tick_offset * scale_factor);
+    tick_offset = new_offset;
 
-    // 3. Update the global phase tracker variable
-    old_phase = new_offset;
+    // 2. Disable the main counter loops
+    TIM1->CR1 &= ~TIM_CR1_CEN;
+    TIM3->CR1 &= ~TIM_CR1_CEN;
 
-    // 4. Write to the Preload registers for the new timeline
+    // 3. Directly update the ARR and CCR registers
     TIM1->ARR = new_arr;
     TIM3->ARR = new_arr;
 
-    // 5. Update the actual active driving channels to 50% duty cycle
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, new_ccr); // Left Leg driving channel
-    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, new_ccr); // Right Leg driving channel
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, new_ccr);         // Left Leg
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, new_ccr);         // Right Leg
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, tick_offset);     // Internal Phase Bridge
 
-    // 6. Update the internal hardware bridge to the new scaled phase offset
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, old_phase);
+    // 4. Force a hardware re-alignment
+    // This resets both internal counters to 0 and preloads the new registers
+    TIM1->EGR = TIM_EGR_UG;
+
+    // 5. Clear the update flags so we don't accidentally trip an interrupt right away
+    __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
+    __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
+
+    // 6. Restart the counters (Turn on the Slave first, then the Master)
+    TIM3->CR1 |= TIM_CR1_CEN;
+    TIM1->CR1 |= TIM_CR1_CEN;
 }
 /* USER CODE END 0 */
 
