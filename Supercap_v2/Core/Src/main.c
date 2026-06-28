@@ -313,66 +313,13 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
 //    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 700);  //charging very slowly
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 550);  //charging slowly
     __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 200);  //not charging
-    //500: not charging
-    //800: Discharging very slowly
-    //700 discharging
-    ///1000: discharging
-    //1250: discharging
-    //100:charging
-    // 50: nothing
-    // 300: nothing
-    //1500: discharging quickly
-    //1750: discharging
-    //600: nothing
-    // 150: charging slowly
-    // 250: charging very slowly
+    //200: discharging quickly
+    //1000: discharging slowly
+    //2000: same
+    //3000: nothing
 
 
-    //new freq:
-    //200:nothing
-    //300:very slow charging? (or nothing)
-    //400: nothing/ discharging
-    //500: discharging very slowly
-    //600: discharging
-    //800: nothing
-    //1000: discharging
-    //1200: discharging quickly
-    //1500: Discharging
-    //1750: Discharging
-    //2500: discharging
-
-    //new freq type:
-    //200: charging very slowly
-    //300: charging very slowly
-    //400: nothing, discharging very slowly
-    //100: very very slowly charging
-    //250:very very slowly charging
-
-    //200: nothing
-    //400: nothing'
-    //600:nothing
-    //3000: discharging very fast
-    //1500: nothing
-    //1000: nothing
-    //800: nothing
-    //100:nothing
-
-    //200:nothing
-    //800:nothing
-    //600:nothing
-    //1500:Discharging slowly
-    //2500: discharging quickly
-    //1000: cahrging very slowly
-    //1100:nothing
-    //900: charging, slower than 1000
-    //1050:???
-
-    //200: discharging
-    //1000: Discharging very slow
-    //1600: nothing/ barely charging
-    //2000:slow
-    //2500: Discharging
-    //2100: charging slowly
+    //
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
@@ -561,6 +508,8 @@ int main(void)
         HAL_ADC_Stop_DMA(&hadc1);
         HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
     }
+
+    htim3.Instance->CCER |= TIM_CCER_CC4P;
 
 
   VOFA_Init();
