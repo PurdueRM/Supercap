@@ -189,7 +189,7 @@ void MX_TIM3_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN TIM3_Init 2 */
-	sSlaveConfig.TriggerPolarity = TIM_TRIGGERPOLARITY_NONINVERTED;
+	sSlaveConfig.TriggerPolarity = TIM_TRIGGERPOLARITY_INVERTED;
 	sSlaveConfig.TriggerPrescaler = TIM_TRIGGERPRESCALER_DIV1;
 	sSlaveConfig.TriggerFilter = 0;
 	// Re-run the sync configuration so it applies your manual additions
