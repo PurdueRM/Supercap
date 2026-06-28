@@ -54,7 +54,7 @@ void MX_TIM1_Init(void)
   {
     Error_Handler();
   }
-  sMasterConfig.MasterOutputTrigger = TIM_TRGO_UPDATE;
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_OC2REF;
   sMasterConfig.MasterOutputTrigger2 = TIM_TRGO2_UPDATE;
   sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_ENABLE;
   if (HAL_TIMEx_MasterConfigSynchronization(&htim1, &sMasterConfig) != HAL_OK)
@@ -154,7 +154,6 @@ void MX_TIM3_Init(void)
     sSlaveConfig.TriggerFilter = 0;
     // Re-run the sync configuration so it applies your manual non-inverted setting
     HAL_TIM_SlaveConfigSynchro(&htim3, &sSlaveConfig);
-    /* USER CODE END TIM3_Init 2 */
   /* USER CODE END TIM3_Init 2 */
   HAL_TIM_MspPostInit(&htim3);
 
