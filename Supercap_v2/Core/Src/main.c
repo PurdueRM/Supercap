@@ -314,9 +314,9 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 550);  //charging slowly
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 500);  //not charging
 
-   // __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1919);
+   __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1919);
 
-    //__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 2400);
+   __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 1000);
 
 
     //500: charging well
@@ -480,39 +480,68 @@ int main(void)
   /* USER CODE BEGIN 2 */
   
   // ====================================================================
-      // 1. HARDWARE MODE SETUP (Single Timer Asymmetric PWM)
+      // 1. HARDWARE MODE SETUP (Edge-Aligned, Master/Slave Trigger)
       // ====================================================================
-      // Set TIM1 to standard Edge-Aligned, Up-Counting Mode
       TIM1->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
+      TIM3->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
 
-      // Configure TIM1 Channel 1 and Channel 2 to Asymmetric PWM Mode 1
-      // OC1M = 1110 (Asymmetric PWM mode 1)
-      TIM1->CCMR1 &= ~(TIM_CCMR1_OC1M | TIM_CCMR1_OC2M);
-      TIM1->CCMR1 |= (TIM_CCMR1_OC1M_2 | TIM_CCMR1_OC1M_1 | TIM_CCMR1_OC1M_0); // CH1 Mode
-      TIM1->CCMR1 |= (TIM_CCMR1_OC2M_2 | TIM_CCMR1_OC2M_1 | TIM_CCMR1_OC2M_0); // CH2 Mode
+      // Matching active-high polarities
+      TIM1->CCER &= ~TIM_CCER_CC1P;
+      TIM3->CCER &= ~TIM_CCER_CC4P;
 
-      // Ensure outputs are enabled and active HIGH
-      TIM1->CCER &= ~(TIM_CCER_CC1P | TIM_CCER_CC2P);
-      TIM1->CCER |= (TIM_CCER_CC1E | TIM_CCER_CC2E);
+      // Set TIM1 TRGO to emit on ENABLE (Master launchpad)
+      TIM1->CR2 &= ~TIM_CR2_MMS;
+      TIM1->CR2 |= TIM_CR2_MMS_0;      // MMS = 001 (Counter Enable is TRGO)
 
-      // Completely disable TIM3 to pull it out of the equation
-      TIM3->CR1 &= ~TIM_CR1_CEN;
+      // Set TIM3 to TRIGGER MODE (Waits for Master TRGO)
+      TIM3->SMCR &= ~TIM_SMCR_SMS;
+      TIM3->SMCR |= (TIM_SMCR_SMS_2 | TIM_SMCR_SMS_1); // SMS = 110 (Trigger Mode)
 
       // ====================================================================
-      // 2. RUNTIME CONTROL REGISTERS
+      // 2. STABLE TELEMETRY RESET
       // ====================================================================
-      // CH1 defines the leading edge (Turn-ON phase shift)
-      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 500);
+      HAL_ADC_Stop_DMA(&hadc1);
+      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR | ADC_FLAG_EOC | ADC_FLAG_EOS);
+      HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
 
-      // CH2 defines the trailing edge (Turn-OFF phase shift)
-      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 2500);
+      // Set identical 50% baseline duty cycles
+      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS); // 1919
+      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS); // 1919
 
-      // Force hardware execution
+      // Preload enabled
+      TIM1->CR1 |= TIM_CR1_ARPE;
+      TIM3->CR1 |= TIM_CR1_ARPE;
+
+      // ====================================================================
+      // 3. MANUAL CHANNEL ENABLE (Bypassing HAL's premature CEN activation)
+      // ====================================================================
+      TIM1->CCER |= TIM_CCER_CC1E; // Enable TIM1 Channel 1 output pin
+      TIM3->CCER |= TIM_CCER_CC4E; // Enable TIM3 Channel 4 output pin
+
+      // Force shadow registers to load values safely
       TIM1->EGR = TIM_EGR_UG;
-      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-      HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_2);
-      HAL_TIM_Base_Start(&htim1);
+      TIM3->EGR = TIM_EGR_UG;
 
+      // Reset counters to 0
+      TIM1->CNT = 0;
+      TIM3->CNT = 0;
+
+      // Clear flags
+      __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
+      __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
+      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
+
+      // ====================================================================
+      // 4. THE HARDWARE LAUNCH
+      // ====================================================================
+      // We ONLY enable the master counter.
+      // TIM1 will instantly assert TRGO, waking up TIM3 in the exact same clock cycle.
+      TIM1->CR1 |= TIM_CR1_CEN;
+
+      // Clear any quick startup transients
+      if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
+          __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
+      }
 
   VOFA_Init();
   HAL_TIM_Base_Start_IT(&htim4); //for power calculation
