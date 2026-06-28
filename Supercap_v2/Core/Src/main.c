@@ -312,7 +312,7 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1919);  //discharged somewhat fast
 //    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 700);  //charging very slowly
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 550);  //charging slowly
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 200);  //not charging
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 500);  //not charging
     //200: discharging quickly
     //1000: discharging slowly
     //2000: same
@@ -336,6 +336,8 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     //2000: charging slowly
     //2200: charging very slowly
     //2050: nothing
+
+    //2000: nothing
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
@@ -525,7 +527,8 @@ int main(void)
         HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
     }
 
-    htim1.Instance->CCER |= TIM_CCER_CC1P;//;htim3.Instance->CCER |= TIM_CCER_CC4P;
+    htim1.Instance->CCER |= TIM_CCER_CC1P; // Invert Master Leg
+    htim3.Instance->CCER |= TIM_CCER_CC4P; // Invert Slave Leg
 
 
   VOFA_Init();
