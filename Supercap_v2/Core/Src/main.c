@@ -331,10 +331,8 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     //2000: discharging quickly
 
 
-    //6V:
-    //500: nothing
-    //1200: nothing
-    //200:
+    //6V: duty
+    //
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
@@ -476,43 +474,67 @@ int main(void)
   MX_TIM4_Init();
   /* USER CODE BEGIN 2 */
   
-
-  // Explicitly force both timers to Edge-Aligned, Up-Counting Mode
+  // ====================================================================
+      // 1. HARDWARE MODE SETUP (Edge-Aligned, Free-Running)
+      // ====================================================================
       TIM1->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
       TIM3->CR1 &= ~(TIM_CR1_CMS | TIM_CR1_DIR);
 
-      // Reset both output channels to standard Active-HIGH matching polarity
+      // Keep active-high polarities clean and matching
       TIM1->CCER &= ~TIM_CCER_CC1P;
       TIM3->CCER &= ~TIM_CCER_CC4P;
 
-      // 1. Set TIM1 to emit TRGO on ENABLE (Starts TIM3 at the exact same instant)
-      TIM1->CR2 &= ~TIM_CR2_MMS;       // Clear master mode bits
-      TIM1->CR2 |= TIM_CR2_MMS_0;      // Set MMS to 001: Counter Enable (CNT_EN) is TRGO
-
-      // 2. Set TIM3 to TRIGGER MODE (Starts counting immediately when TIM1 starts)
-      TIM3->SMCR &= ~TIM_SMCR_SMS;     // Clear slave mode bits
-      TIM3->SMCR |= (TIM_SMCR_SMS_2 | TIM_SMCR_SMS_1); // Set SMS to 110: Trigger Mode
+      // Disconnect all master/slave trigger hardware to protect the ADC/DMA
+      TIM1->CR2 &= ~TIM_CR2_MMS;
+      TIM3->SMCR &= ~TIM_SMCR_SMS;
 
       // ====================================================================
-      // 3. SAFE STARTUP SEQUENCE
+      // 2. SAFE TELEMETRY RESET
       // ====================================================================
+      HAL_ADC_Stop_DMA(&hadc1);
+      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR | ADC_FLAG_EOC | ADC_FLAG_EOS);
+      HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
+
+      // Set initial matching 50% duty cycles
+      __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, HALF_DUTY_TICKS); // 1919
+      __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, HALF_DUTY_TICKS); // 1919
+
+      htim1.Instance->CR1 |= TIM_CR1_ARPE;
+      htim3.Instance->CR1 |= TIM_CR1_ARPE;
+
+      // Enable the output channels without turning on the clocks yet
       HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
-      HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_2);
       HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
 
-      // Force shadow register preloading safely
+      // Force shadow register updates
       htim1.Instance->EGR = TIM_EGR_UG;
       htim3.Instance->EGR = TIM_EGR_UG;
 
+      // Explicitly turn OFF both counters to prep for a synchronized launch
+      TIM1->CR1 &= ~TIM_CR1_CEN;
+      TIM3->CR1 &= ~TIM_CR1_CEN;
+
+      // Reset both counter registers to absolute 0
+      TIM1->CNT = 0;
+      TIM3->CNT = 0;
+
+      // Clear any transient artifacts
       __HAL_TIM_CLEAR_FLAG(&htim1, TIM_FLAG_UPDATE);
       __HAL_TIM_CLEAR_FLAG(&htim3, TIM_FLAG_UPDATE);
-      __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
+      __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
 
-      // Start both clocks cleanly
-      //HAL_TIM_Base_Start(&htim3);
-      HAL_TIM_Base_Start(&htim1);
+      // OPTIONAL: Only uncomment if your TIM1 ISR clears the update flag!
+      // __HAL_TIM_ENABLE_IT(&htim1, TIM_IT_UPDATE);
 
-      // Clear any transient overruns
+      // ====================================================================
+      // 3. SYNCHRONOUS SOFTWARE LAUNCH
+      // ====================================================================
+      // This turns on both timer clocks in the exact same CPU instruction execution
+      __disable_irq();
+      TIM1->CR1 |= TIM_CR1_CEN;
+      TIM3->CR1 |= TIM_CR1_CEN;
+      __enable_irq();
+
       if (__HAL_ADC_GET_FLAG(&hadc1, ADC_FLAG_OVR)) {
           __HAL_ADC_CLEAR_FLAG(&hadc1, ADC_FLAG_OVR);
       }
