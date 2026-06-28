@@ -311,7 +311,8 @@ void PowerStage_SetPhaseSystem(float target_power, float control_effort)
     current_state = 1;
     //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1919);  //discharged somewhat fast
 //    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 700);  //charging very slowly
-    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 550);  //??
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 550);  //charging slowly
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 480);  //charging slowly
 }
 
 /* Decide what the supercap should do and the duty cycle to achieve that */
