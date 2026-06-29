@@ -68,6 +68,7 @@ extern uint16_t adc1_buffer[5]; //holds adc values for motor current and bus vol
 //extern uint16_t adc2_buffer[3];
 extern float power_integral;
 extern float cap_voltage;
+float Get_Filtered_Power(float new_power);
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

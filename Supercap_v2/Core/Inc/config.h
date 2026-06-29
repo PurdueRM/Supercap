@@ -49,6 +49,7 @@ extern "C" {
 /* ---------------- Timers ---------------- */
 #define CENTER_ALIGNED_MAX_REG   1919U
 #define HALF_DUTY_TICKS          960U     // 50% Duty Cycle point
+#define TIMER_PERIOD 3838
 
 
 #ifdef __cplusplus

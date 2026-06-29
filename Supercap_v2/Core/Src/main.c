@@ -94,6 +94,18 @@ uint16_t adc_pc0 = 0;
 uint16_t adc_pa2 = 0;
 uint16_t adc_pa3 = 0;
 
+
+
+// Define a structure to hold your PID state
+typedef struct {
+    float Kp;
+    float Ki;
+    float Kd;
+    float integral;
+    float prev_error;
+} PID_Controller;
+
+PID_Controller power_pid = {0.1f, 0.05f, 0.0f, 0.0f, 0.0f};
 /* Converted pin voltages */
 float v_pa6 = 0.0f;
 float v_pc4 = 0.0f;
@@ -141,7 +153,7 @@ float ABSF(float x);
 uint32_t DutyPermilleToCompare(TIM_HandleTypeDef *htim, uint32_t duty_permille);
 
 //for power calc
-#define BUFFER_SIZE 10  // 10 samples * 10ms interrupt = 100ms time delta
+#define BUFFER_SIZE 64  // x samples
 float energy_buffer[BUFFER_SIZE] = {0};
 uint8_t buffer_index = 0;
 float current_power_watts = 0.0f;
@@ -151,7 +163,22 @@ float current_power_watts = 0.0f;
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+#define FILTER_SIZE 16
+float power_history[FILTER_SIZE];
+int filter_index = 0;
 
+float Get_Filtered_Power(float new_power) {
+    // Add new sample to history
+    power_history[filter_index] = new_power;
+    filter_index = (filter_index + 1) % FILTER_SIZE;
+
+    // Calculate average
+    float sum = 0.0f;
+    for(int i = 0; i < FILTER_SIZE; i++) {
+        sum += power_history[i];
+    }
+    return sum / FILTER_SIZE;
+}
 float ABSF(float x)
 {
     return (x < 0.0f) ? -x : x;
@@ -205,141 +232,39 @@ void VOFA_SendData(void)
 {
     HAL_UART_Transmit(&huart4, (uint8_t *)&g_vofa_frame, sizeof(g_vofa_frame), 1000);
 }
-
-
-float Process_Dynamic_Power_Tracking(float target_power, float actual_power)
+void Process_Dynamic_Power_Tracking(float target_power, float v_cap, float measured_power, float v_bus)
 {
-    static float last_target_power = 0.0f;
+    // 1. Feed-Forward Calculation
+    float target_current = target_power / v_cap;
+    float delta_v = target_current * SYSTEM_R;
 
-    // 1. Calculate actual power error
-    float power_error = target_power - actual_power;
+    float ccr_neutral = (v_cap / v_bus) * TIMER_PERIOD;
+    float ccr_feedforward = (delta_v / v_bus) * TIMER_PERIOD;
 
-    // 2. Anti-Windup: If direction flips, instantly clear the accumulator
-    if ((target_power > 0.0f && last_target_power < 0.0f) ||
-        (target_power < 0.0f && last_target_power > 0.0f))
-    {
-        power_integral = 0.0f;
-    }
-    last_target_power = target_power;
+    // 2. PID Correction
+    float error = target_power - measured_power;
 
-    // 3. Accumulate Error
-    power_integral += power_error * KI_GAIN;
+    // Simple PI implementation (Integral + Proportional)
+    float delta_t = CONTROL_DELAY_MS / 1000.0f;
+    power_pid.integral += error * delta_t; // 0.001 represents your loop delta_t (e.g., 1ms)
 
-    // 4. Bound the integral term to prevent runaway windup
-    if (power_integral > MAX_INTEGRAL_TERM)  power_integral = MAX_INTEGRAL_TERM;
-    if (power_integral < -MAX_INTEGRAL_TERM) power_integral = -MAX_INTEGRAL_TERM;
+    // Anti-windup: limit the integral so it doesn't grow to infinity
+    if (power_pid.integral > 500.0f) power_pid.integral = 500.0f;
+    if (power_pid.integral < -500.0f) power_pid.integral = -500.0f;
 
-    // 5. Compute Proportional + Integral control action
-    // Note: Feed-forward is omitted here because phase equilibrium is inherently 0.
-    float pi_output = (power_error * KP_GAIN) + power_integral;
+    float pid_correction = (power_pid.Kp * error) + (power_pid.Ki * power_pid.integral);//sign might be wrong
 
-    // 6. Enforce hard directional limits and prevent overshoot
-    if (target_power > 0.0f)
-    {
-        // --- CHARGING MODE ---
-        // If we are overshooting the target charging power, freeze the drive effort
-        if (actual_power >= target_power)
-        {
-            if (pi_output > 0.0f) pi_output = 0.0f;
-            power_integral = 0.0f; // Freeze accumulator
-            global_clip_reason += 1;
-        }
+    // 3. Combine and Apply
+    float final_ccr = ccr_neutral + ccr_feedforward + pid_correction;
 
-        // For charging, we only expect a positive correction phase shift
-        if (pi_output < 0.0f) pi_output = 0.0f;
-    }
-    else if (target_power < 0.0f)
-    {
-        // --- DISCHARGING MODE ---
-        // Since target_power and actual_power are negative during discharge,
-        // actual_power <= target_power means we are discharging *more* power than desired.
-        if (actual_power <= target_power)
-        {
-            if (pi_output < 0.0f) pi_output = 0.0f;
-            power_integral = 0.0f; // Freeze accumulator
-            global_clip_reason += 2;
-        }
+    // 4. Safety Limits
+    if (final_ccr > (TIMER_PERIOD * 0.95f)) final_ccr = (TIMER_PERIOD * 0.95f);
+    if (final_ccr < 0.0f) final_ccr = 0.0f;
 
-        // For discharging, invert the negative PI output to extract the absolute shift magnitude
-        pi_output = -pi_output;
-        if (pi_output < 0.0f) pi_output = 0.0f;
-    }
-    else
-    {
-        // Target is zero
-        pi_output = 0.0f;
-        power_integral = 0.0f;
-    }
-
-    // 7. Normalize the final effort stringently between 0.0 and 1.0
-    // This value maps directly to 0% to 100% of your MAX_PHASE_SHIFT (960 ticks)
-    if (pi_output > 1.0f) pi_output = 1.0f;
-
-    return pi_output;
+    // 5. Update Hardware
+    global_phase = (uint32_t)final_ccr;
+    TIM1->CCR1 = (uint32_t)final_ccr;
 }
-
-void PowerStage_SetPhaseSystem(float target_power, float control_effort)
-{
-    if (control_effort > 1.0f) control_effort = 1.0f;
-    if (control_effort < 0.0f) control_effort = 0.0f;
-    global_control_effort = control_effort;
-
-    // Scale the shift up to the maximum single-ramp peak (960 ticks = 90 degrees)
-    uint32_t tick_offset = (uint32_t)(control_effort * (float)HALF_DUTY_TICKS);
-    global_phase = (float)tick_offset;
-
-//    if (target_power > 0.0f)
-//    {
-//        // --- CHARGING MODE (TIM1 Leads TIM3) ---
-//        // As tick_offset goes 0 -> 960, TIM3 resets later and later (Phase lag)
-//    	current_state = 1;
-//        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, tick_offset);
-//    }
-//    else if (target_power < 0.0f)
-//    {
-//        // --- DISCHARGING MODE (TIM3 Leads TIM1) ---
-//        // To make TIM3 lead TIM1, TIM3 must reset *before* TIM1 finishes its cycle.
-//        // We project the offset symmetrically across the center-aligned period valley.
-//    	current_state = 2;
-//    	__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, HALF_DUTY_TICKS - tick_offset);
-//    }
-//    else
-//    {
-//        // --- EQUILIBRIUM ---
-//        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 0);
-//    }
-    current_state = 1;
-    //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 1919);  //discharged somewhat fast
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 700);  //charging very slowly
-    //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 550);  //charging slowly
-    //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, 500);  //not charging
-
-   //__HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 1919);
-
-   //__HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 1000);
-
-
-    //500: charging well
-    //300: charging slower
-    //400: charging slower
-    //600: nothing
-    //525: charging slightly slower
-    //475: nothing
-    //495: nothing
-    //505: nothing
-    //1000: slowly discharging
-    //2000: discharging quickly
-
-
-    //6V: duty
-    // 2400: discharging very slowly
-    //1200: charging incredibly slowly
-    //500: nothing
-    //250: nothing
-
-    //2500, 500:nothing
-}
-
 /* Decide what the supercap should do and the duty cycle to achieve that */
 void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage, float cap_current, float motor_current, float motor_voltage)
 {
@@ -378,39 +303,11 @@ void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage
 			target_power = -MAX_DISCHARGE_CURRENT * cap_voltage;
 			global_clip_reason += 32;
 		}
-
-		float control_effort = Process_Dynamic_Power_Tracking(target_power, capacitor_power);
-		PowerStage_SetPhaseSystem(target_power, fabsf(control_effort));
+		global_control_effort =  target_power;
+		Process_Dynamic_Power_Tracking(target_power, cap_voltage, capacitor_power, bat_voltage);
 		PowerStage_Enable(1);
 	}
 }
-
-
-//void Change_HBridge_Frequency(uint32_t new_arr, uint32_t old_phase)
-//{
-//    // 1. Calculate the new 50% duty cycle value
-//    uint32_t new_ccr = new_arr / 2;
-//
-//    // 2. Scale your active phase offset to match the new timeline
-//    float scale_factor = (float)new_arr / (float)TIM1->ARR;
-//    uint32_t new_offset = (uint32_t)((float)old_phase * scale_factor);
-//
-//    // 3. Update the global phase tracker variable
-//    old_phase = new_offset;
-//
-//    // 4. Write to the Preload registers for the new timeline
-//    TIM1->ARR = new_arr;
-//    TIM3->ARR = new_arr;
-//
-//    // 5. Update the actual active driving channels to 50% duty cycle
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, new_ccr); // Left Leg driving channel
-//    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, new_ccr); // Right Leg driving channel
-//
-//    // 6. Update the internal hardware bridge to the new scaled phase offset
-//    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_2, old_phase);
-//
-//
-//}
 
 /* USER CODE END 0 */
 
@@ -529,7 +426,7 @@ int main(void)
 
     /* ===== PARALLEL POWER-SHARING CONTROLLER ===== */
     //PowerSharingControl(bus_voltage, i_bat_current, cap_voltage, i_cap_current, i_motor_current, bus_voltage);
-
+    //the below code is for testing to make sure it can be charged and discahrged, once this is confirmed to work, comment it out and uncomment the above
     float v_cap = cap_voltage;
 
     // 2. Calculate the Neutral Duty Cycle (ensure 24.0 is a float to prevent integer truncation)

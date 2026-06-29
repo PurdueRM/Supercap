@@ -59,9 +59,8 @@
 extern DMA_HandleTypeDef hdma_adc1;
 extern TIM_HandleTypeDef htim4;
 /* USER CODE BEGIN EV */
-#define BUFFER_SIZE 10  // 10 samples * 10ms interrupt = 100ms time delta
-extern float energy_buffer[BUFFER_SIZE];
-extern uint8_t buffer_index;
+extern float i_cap_current;
+extern float cap_voltagee;
 extern float current_power_watts;
 
 /* USER CODE END EV */
@@ -228,17 +227,11 @@ void TIM4_IRQHandler(void)
   /* USER CODE END TIM4_IRQn 0 */
   HAL_TIM_IRQHandler(&htim4);
   /* USER CODE BEGIN TIM4_IRQn 1 */
-  float current_energy = 0.5f * CAPACITANCE_TOTAL * cap_voltage * cap_voltage;
 
-  // 2. Extract the old energy from exactly 100ms ago
-  float old_energy = energy_buffer[buffer_index];
+  float latest_power = cap_voltage * i_cap_current;
 
-  // 3. Calculate Power: P = dE / dt (dt = 100ms = 0.1 seconds)
-  current_power_watts = (current_energy - old_energy) / 1.0f;
-
-  // 4. Overwrite the oldest sample with the newest one and advance the ring
-  energy_buffer[buffer_index] = current_energy;
-  buffer_index = (buffer_index + 1) % BUFFER_SIZE;
+      // Smooth it
+  current_power_watts = Get_Filtered_Power(latest_power);
 
   /* USER CODE END TIM4_IRQn 1 */
 }
