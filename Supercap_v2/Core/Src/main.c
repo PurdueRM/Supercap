@@ -357,14 +357,25 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   /* 1. Arm the listener */
-  HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5);
+  if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK) {
+      Error_Handler();
+  }
+
+  // 2. Arm the DMA (Do this once)
+  if (HAL_ADC_Start_DMA(&hadc1, (uint32_t*)adc1_buffer, 5) != HAL_OK) {
+      Error_Handler();
+  }
 
   /* 2. Put the Slave at attention */
   HAL_TIM_PWM_Start(&htim3, TIM_CHANNEL_4);
 
-  /* 3. Pull the Master trigger */
+  // 2. Start the Master timer components
+  // Start the PWM output for the Buck stage
   HAL_TIM_PWM_Start(&htim1, TIM_CHANNEL_1);
-  HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_2); /* Starts the TRGO broadcast */
+
+  // Start the Output Compare channel that generates your TRGO trigger
+  HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_2);
+  __HAL_TIM_ENABLE(&htim1); // Start the timer
 
 
   /* USER CODE END 2 */
@@ -444,6 +455,14 @@ int main(void)
     VOFA_SendData();
 
     HAL_Delay(CONTROL_DELAY_MS);
+
+    //update adc trigger point
+    if (TIM1->CCR1 > 100) {
+        TIM1->CCR2 = TIM1->CCR1 / 2;
+    } else {
+        // Keep it at a safe default or disable
+        TIM1->CCR2 = 50;
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
