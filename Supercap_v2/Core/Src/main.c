@@ -357,7 +357,8 @@ int main(void)
   /* USER CODE BEGIN 2 */
 
   /* 1. Arm the listener */
-  if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_SINGLE_ENDED) != HAL_OK) {
+  if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED) != HAL_OK)
+  {
       Error_Handler();
   }
 
