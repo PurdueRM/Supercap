@@ -268,9 +268,4 @@ void TIM5_IRQHandler(void)
 
 /* USER CODE BEGIN 1 */
 
-void DMA1_Stream0_IRQHandler(void)
-{
-    HAL_DMA_IRQHandler(&hdma_adc1);
-}
-
 /* USER CODE END 1 */
