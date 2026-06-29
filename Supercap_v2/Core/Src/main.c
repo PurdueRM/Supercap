@@ -232,83 +232,194 @@ void VOFA_SendData(void)
 {
     HAL_UART_Transmit(&huart4, (uint8_t *)&g_vofa_frame, sizeof(g_vofa_frame), 1000);
 }
-void Process_Dynamic_Power_Tracking(float target_power, float v_cap, float measured_power, float v_bus)
+//void Process_Dynamic_Power_Tracking(float target_power, float v_cap, float measured_power, float v_bus)
+//{
+//    // 1. Feed-Forward Calculation
+//    float target_current = target_power / v_cap;
+//    float delta_v = target_current * SYSTEM_R;
+//
+//    float ccr_neutral = (v_cap / v_bus) * TIMER_PERIOD;
+//    float ccr_feedforward = (delta_v / v_bus) * TIMER_PERIOD;
+//
+//    // 2. PID Correction
+//    float error = target_power - measured_power;
+//
+//    // Simple PI implementation (Integral + Proportional)
+//    float delta_t = CONTROL_DELAY_MS / 1000.0f;
+//    power_pid.integral += error * delta_t; // 0.001 represents your loop delta_t (e.g., 1ms)
+//
+//    // Anti-windup: limit the integral so it doesn't grow to infinity
+//    if (power_pid.integral > 500.0f) power_pid.integral = 500.0f;
+//    if (power_pid.integral < -500.0f) power_pid.integral = -500.0f;
+//
+//    float pid_correction = (power_pid.Kp * error) + (power_pid.Ki * power_pid.integral);//sign might be wrong
+//
+//    // 3. Combine and Apply
+//    float final_ccr = ccr_neutral + ccr_feedforward + pid_correction;
+//
+//    // 4. Safety Limits
+//    if (final_ccr > (TIMER_PERIOD * 0.95f)) final_ccr = (TIMER_PERIOD * 0.95f);
+//    if (final_ccr < 0.0f) final_ccr = 0.0f;
+//
+//    // 5. Update Hardware
+//    global_phase = (uint32_t)final_ccr;
+//    TIM1->CCR1 = (uint32_t)final_ccr;
+//}
+///* Decide what the supercap should do and the duty cycle to achieve that */
+//void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage, float cap_current, float motor_current, float motor_voltage)
+//{
+//	float requested_power = motor_current * motor_voltage;
+//	//float battery_power = bat_voltage * bat_current;
+//	float capacitor_energy = 0.5f * CAPACITANCE_TOTAL * cap_voltage * cap_voltage;
+//	float capacitor_power = cap_voltage * cap_current;
+//
+//	//figure out mode
+//	if(ref_system_indicates_off){
+//		//off
+//		PowerStage_Enable(0); //turns off charging and discharging
+//		power_integral = 0.0f;
+//		current_state = SYSTEM_OFF;
+//	}
+//	else{
+//		//charging or discharging
+//		float target_power = POWER_LIMIT - requested_power;
+//		float safe_cap_volt = (cap_voltage > 0.5f) ? cap_voltage : 0.5f;
+//		float max_safe_charge_power = MAX_CHARGE_CURRENT * safe_cap_volt;
+//
+//		//safety limits
+//		if ((capacitor_energy < MINIMUM_CAPACITOR_ENERGY) && (target_power < 0.0f)) {
+//			target_power = 0.0f;
+//			global_clip_reason += 4;
+//		}
+//		if ((cap_voltage > CAPACITOR_VOLTAGE_MAX) && (target_power > 0.0f)) {
+//			target_power = 0.0f;
+//			global_clip_reason += 8;
+//		}
+//		if((target_power > 0.0f) && (target_power > max_safe_charge_power)){
+//			target_power = max_safe_charge_power;
+//			global_clip_reason += 16;
+//		}
+//		if((target_power < 0) && (-target_power > MAX_DISCHARGE_CURRENT * cap_voltage)){
+//			target_power = -MAX_DISCHARGE_CURRENT * cap_voltage;
+//			global_clip_reason += 32;
+//		}
+//		global_control_effort =  target_power;
+//		Process_Dynamic_Power_Tracking(target_power, cap_voltage, capacitor_power, bat_voltage);
+//		PowerStage_Enable(1);
+//	}
+//}
+
+typedef enum {
+    CHARGE = 0,
+    DISCHARGE
+} PowerState;
+
+volatile PowerState state = CHARGE;
+
+volatile uint16_t counter = 0;
+
+volatile uint16_t CCR_charge = 200;
+volatile uint16_t CCR_discharge = 200;
+
+float Vcap = 0;
+float Vref = 17.0f;
+float error = 0;
+#define TIM1_ARR (htim1.Init.Period)
+#define TIM3_ARR (htim3.Init.Period)
+static inline void left_high(void)
 {
-    // 1. Feed-Forward Calculation
-    float target_current = target_power / v_cap;
-    float delta_v = target_current * SYSTEM_R;
-
-    float ccr_neutral = (v_cap / v_bus) * TIMER_PERIOD;
-    float ccr_feedforward = (delta_v / v_bus) * TIMER_PERIOD;
-
-    // 2. PID Correction
-    float error = target_power - measured_power;
-
-    // Simple PI implementation (Integral + Proportional)
-    float delta_t = CONTROL_DELAY_MS / 1000.0f;
-    power_pid.integral += error * delta_t; // 0.001 represents your loop delta_t (e.g., 1ms)
-
-    // Anti-windup: limit the integral so it doesn't grow to infinity
-    if (power_pid.integral > 500.0f) power_pid.integral = 500.0f;
-    if (power_pid.integral < -500.0f) power_pid.integral = -500.0f;
-
-    float pid_correction = (power_pid.Kp * error) + (power_pid.Ki * power_pid.integral);//sign might be wrong
-
-    // 3. Combine and Apply
-    float final_ccr = ccr_neutral + ccr_feedforward + pid_correction;
-
-    // 4. Safety Limits
-    if (final_ccr > (TIMER_PERIOD * 0.95f)) final_ccr = (TIMER_PERIOD * 0.95f);
-    if (final_ccr < 0.0f) final_ccr = 0.0f;
-
-    // 5. Update Hardware
-    global_phase = (uint32_t)final_ccr;
-    TIM1->CCR1 = (uint32_t)final_ccr;
+    // High-side ON (full ON)
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, TIM1_ARR);
 }
-/* Decide what the supercap should do and the duty cycle to achieve that */
-void PowerSharingControl(float bat_voltage, float bat_current, float cap_voltage, float cap_current, float motor_current, float motor_voltage)
+
+static inline void left_low(void)
 {
-	float requested_power = motor_current * motor_voltage;
-	//float battery_power = bat_voltage * bat_current;
-	float capacitor_energy = 0.5f * CAPACITANCE_TOTAL * cap_voltage * cap_voltage;
-	float capacitor_power = cap_voltage * cap_current;
-
-	//figure out mode
-	if(ref_system_indicates_off){
-		//off
-		PowerStage_Enable(0); //turns off charging and discharging
-		power_integral = 0.0f;
-		current_state = SYSTEM_OFF;
-	}
-	else{
-		//charging or discharging
-		float target_power = POWER_LIMIT - requested_power;
-		float safe_cap_volt = (cap_voltage > 0.5f) ? cap_voltage : 0.5f;
-		float max_safe_charge_power = MAX_CHARGE_CURRENT * safe_cap_volt;
-
-		//safety limits
-		if ((capacitor_energy < MINIMUM_CAPACITOR_ENERGY) && (target_power < 0.0f)) {
-			target_power = 0.0f;
-			global_clip_reason += 4;
-		}
-		if ((cap_voltage > CAPACITOR_VOLTAGE_MAX) && (target_power > 0.0f)) {
-			target_power = 0.0f;
-			global_clip_reason += 8;
-		}
-		if((target_power > 0.0f) && (target_power > max_safe_charge_power)){
-			target_power = max_safe_charge_power;
-			global_clip_reason += 16;
-		}
-		if((target_power < 0) && (-target_power > MAX_DISCHARGE_CURRENT * cap_voltage)){
-			target_power = -MAX_DISCHARGE_CURRENT * cap_voltage;
-			global_clip_reason += 32;
-		}
-		global_control_effort =  target_power;
-		Process_Dynamic_Power_Tracking(target_power, cap_voltage, capacitor_power, bat_voltage);
-		PowerStage_Enable(1);
-	}
+    // Low-side ON (or equivalently force OFF high-side)
+    __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
 }
 
+static inline void right_high(void)
+{
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, TIM3_ARR);
+}
+
+static inline void right_low(void)
+{
+    __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
+}
+
+
+void apply_state(void)
+{
+    if (state == CHARGE)
+    {
+        // LEFT bridge ON (battery → inductor)
+        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, __HAL_TIM_GET_AUTORELOAD(&htim1));
+
+        // RIGHT bridge OFF (no drive / sink mode)
+        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
+    }
+    else
+    {
+        // LEFT bridge OFF
+        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+
+        // RIGHT bridge ON (inductor → capacitor)
+        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, __HAL_TIM_GET_AUTORELOAD(&htim3));
+    }
+}
+
+void control_loop(void)
+{
+    // 1. read output voltage
+    float Vcap = cap_voltage;
+
+    // 2. voltage error
+    float error = bus_voltage - Vcap;
+
+    // 3. PI controller (simple version)
+    static float integ = 0;
+    integ += error * 0.001f;
+
+    float cmd = 0.5f * error + 0.1f * integ;
+
+    // 4. convert command → timing
+    CCR_charge = 150 + (uint16_t)(cmd * 50);
+
+    // keep discharge mostly fixed or lightly adaptive
+    CCR_discharge = 200;
+
+    // 5. state timing logic
+    counter++;
+
+    if (state == CHARGE)
+    {
+        if (counter >= CCR_charge)
+        {
+            counter = 0;
+            state = DISCHARGE;
+            apply_state();   // <-- IMPORTANT
+        }
+    }
+    else
+    {
+        if (counter >= CCR_discharge)
+        {
+            counter = 0;
+            state = CHARGE;
+            apply_state();   // <-- IMPORTANT
+        }
+    }
+}
+
+void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
+{
+    if (hadc == &hadc1)
+    {
+        control_loop();
+        apply_state();
+    }
+}
 /* USER CODE END 0 */
 
 /**
@@ -354,7 +465,10 @@ int main(void)
   MX_TIM1_Init();
   MX_ADC3_Init();
   MX_TIM4_Init();
+  MX_TIM5_Init();
   /* USER CODE BEGIN 2 */
+  HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 1, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream0_IRQn);
 
   /* 1. Arm the listener */
   if (HAL_ADCEx_Calibration_Start(&hadc1, ADC_CALIB_OFFSET, ADC_SINGLE_ENDED) != HAL_OK)
@@ -377,14 +491,15 @@ int main(void)
   // Start the Output Compare channel that generates your TRGO trigger
   HAL_TIM_OC_Start(&htim1, TIM_CHANNEL_2);
   __HAL_TIM_ENABLE(&htim1); // Start the timer
-
+  __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
+  __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
-  TIM3->CCR4 = 3646;
+  apply_state();
   while (1)
   {
      /* ===== READ ADCs ===== */
@@ -436,21 +551,6 @@ int main(void)
     i_bat_protect    = i_bat_current_raw;
     i_cap_protect    = i_cap_current_raw;
 
-    /* ===== PARALLEL POWER-SHARING CONTROLLER ===== */
-    //PowerSharingControl(bus_voltage, i_bat_current, cap_voltage, i_cap_current, i_motor_current, bus_voltage);
-    //the below code is for testing to make sure it can be charged and discahrged, once this is confirmed to work, comment it out and uncomment the above
-    float v_cap = cap_voltage;
-
-    // 2. Calculate the Neutral Duty Cycle (ensure 24.0 is a float to prevent integer truncation)
-    float duty_neutral = v_cap / 24.0f;
-
-    // 3. Convert the duty cycle percentage into the actual timer register value
-    uint32_t ccr_neutral = (uint32_t)(duty_neutral * 3838.0f);
-
-    // 4. Now apply your offset to actually move current!
-    // To Charge (push current into the cap)
-    TIM1->CCR1 = ccr_neutral + 75;
-
     /* ===== VOFA telemetry ===== */
     VOFA_UpdateData();
     VOFA_SendData();
@@ -458,12 +558,12 @@ int main(void)
     HAL_Delay(CONTROL_DELAY_MS);
 
     //update adc trigger point
-    if (TIM1->CCR1 > 100) {
-        TIM1->CCR2 = TIM1->CCR1 / 2;
-    } else {
-        // Keep it at a safe default or disable
-        TIM1->CCR2 = 50;
-    }
+//    if (TIM1->CCR1 > 100) {
+//        TIM1->CCR2 = TIM1->CCR1 / 2;
+//    } else {
+//        // Keep it at a safe default or disable
+//        TIM1->CCR2 = 50;
+//    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
