@@ -186,7 +186,7 @@ float ABSF(float x)
 
 float INA240_VoltageToCurrent(float voltage)
 {
-    return ((voltage - INA240_OFFSET_V) * CURRENT_SHUNT_SCALE) + CURRENT_OFFSET;
+    return -1 * (((voltage - INA240_OFFSET_V) * CURRENT_SHUNT_SCALE) + CURRENT_OFFSET);
 }
 
 void PowerStage_Enable(uint8_t en)
