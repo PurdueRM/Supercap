@@ -314,6 +314,7 @@ typedef enum {
     DISCHARGE
 } PowerState;
 
+
 volatile PowerState state = CHARGE;
 
 volatile uint16_t counter = 0;
@@ -349,67 +350,54 @@ static inline void right_low(void)
 }
 
 
-void apply_state(void)
+void apply_state(power_dir_t dir, float speed)
 {
-    if (state == CHARGE)
-    {
-        // LEFT bridge ON (battery → inductor)
-        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, __HAL_TIM_GET_AUTORELOAD(&htim1));
+    // clamp speed
+    if (speed < 0.0f) speed = 0.0f;
+    if (speed > 1.0f) speed = 1.0f;
 
-        // RIGHT bridge OFF (no drive / sink mode)
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, 0);
+    uint32_t arr = __HAL_TIM_GET_AUTORELOAD(&htim1);
+
+    // convert speed → duty range (avoid 0% and 100%)
+    float duty = 0.05f + speed * 0.90f;
+
+    uint32_t ccr = (uint32_t)(duty * arr);
+
+    if (dir == DIR_CHARGE)
+    {
+        // energy: BAT → CAP
+        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, ccr);
+        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, arr - ccr);
     }
     else
     {
-        // LEFT bridge OFF
-        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, 0);
-
-        // RIGHT bridge ON (inductor → capacitor)
-        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, __HAL_TIM_GET_AUTORELOAD(&htim3));
+        // energy: CAP → BAT
+        __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, arr - ccr);
+        __HAL_TIM_SET_COMPARE(&htim3, TIM_CHANNEL_4, ccr);
     }
 }
 
 void control_loop(void)
 {
-    // 1. read output voltage
     float Vcap = cap_voltage;
 
-    // 2. voltage error
-    float error = bus_voltage - Vcap;
+    float error_charge = bus_voltage - Vcap;
+    float error_discharge = Vcap - bus_voltage;
 
-    // 3. PI controller (simple version)
     static float integ = 0;
-    integ += error * 0.001f;
+    integ += (error_charge - error_discharge) * 0.001f;
 
-    float cmd = 0.5f * error + 0.1f * integ;
+    float cmd = 0.6f * (error_charge - error_discharge) + 0.1f * integ;
 
-    // 4. convert command → timing
-    CCR_charge = 150 + (uint16_t)(cmd * 50);
+    // convert to speed
+    float speed = fabsf(cmd);
 
-    // keep discharge mostly fixed or lightly adaptive
-    CCR_discharge = 200;
+    if (speed > 1.0f) speed = 1.0f;
 
-    // 5. state timing logic
-    counter++;
+    power_dir_t dir = (error_charge > 0) ? DIR_CHARGE : DIR_DISCHARGE;
 
-    if (state == CHARGE)
-    {
-        if (counter >= CCR_charge)
-        {
-            counter = 0;
-            state = DISCHARGE;
-            apply_state();   // <-- IMPORTANT
-        }
-    }
-    else
-    {
-        if (counter >= CCR_discharge)
-        {
-            counter = 0;
-            state = CHARGE;
-            apply_state();   // <-- IMPORTANT
-        }
-    }
+    //apply_state(dir, speed);
+    apply_state(DIR_CHARGE, 1.0f);
 }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
@@ -417,7 +405,6 @@ void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
     if (hadc == &hadc1)
     {
         control_loop();
-        apply_state();
     }
 }
 /* USER CODE END 0 */
@@ -499,7 +486,6 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
-  apply_state();
   while (1)
   {
      /* ===== READ ADCs ===== */

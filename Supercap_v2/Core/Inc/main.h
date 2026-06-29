@@ -66,11 +66,15 @@ extern uint16_t adc1_buffer[5]; //holds adc values for motor current and bus vol
 // Index 1 = PA2 (VCAP)
 // Index 2 = PA3 (ICAP)
 //extern uint16_t adc2_buffer[3];
+typedef enum {
+    DIR_CHARGE = 0,
+    DIR_DISCHARGE = 1
+} power_dir_t;
 extern float power_integral;
 extern float cap_voltage;
 float Get_Filtered_Power(float new_power);
 void control_loop(void);
-void apply_state(void);
+void apply_state(power_dir_t dir, float speed);
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus
