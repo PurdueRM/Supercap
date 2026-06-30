@@ -29,6 +29,7 @@
 /* USER CODE BEGIN Includes */
 #include <stdint.h>
 #include "config.h"
+#include <stdlib.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -397,7 +398,7 @@ void control_loop(void)
     power_dir_t dir = (error_charge > 0) ? DIR_CHARGE : DIR_DISCHARGE;
 
     //apply_state(dir, speed);
-    apply_state(DIR_CHARGE, 1.0f);
+    apply_state(DIR_CHARGE, 1.0f); ///////////////////////////////////////////////////////////////changed
 }
 
 void HAL_ADC_ConvCpltCallback(ADC_HandleTypeDef *hadc)
@@ -486,6 +487,63 @@ int main(void)
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   HAL_GPIO_WritePin(GPIOB, GPIO_PIN_11, GPIO_PIN_SET);
+
+
+  //check timers are configured correctly
+  volatile uint32_t tim1_cnt;
+  volatile uint32_t tim3_cnt;
+
+  volatile uint32_t tim1_arr;
+  volatile uint32_t tim3_arr;
+
+  volatile uint32_t tim1_cr1;
+  volatile uint32_t tim1_cr2;
+  volatile uint32_t tim3_cr1;
+  volatile uint32_t tim3_smcr;
+
+  volatile uint32_t tim1_mms;
+  volatile uint32_t tim1_mms2;
+
+  volatile uint32_t tim3_sms;
+  volatile uint32_t tim3_ts;
+
+  volatile int32_t  timer_cnt_difference;
+
+  volatile uint8_t timer_sync_ok;
+  tim1_cnt  = TIM1->CNT;
+  tim3_cnt  = TIM3->CNT;
+
+  tim1_arr  = TIM1->ARR;
+  tim3_arr  = TIM3->ARR;
+
+  tim1_cr1  = TIM1->CR1;
+  tim1_cr2  = TIM1->CR2;
+  tim3_cr1  = TIM3->CR1;
+  tim3_smcr = TIM3->SMCR;
+
+  // TIM1 TRGO
+  tim1_mms  = (TIM1->CR2 >> 4) & 0x7;
+
+  // TIM1 TRGO2
+  tim1_mms2 = (TIM1->CR2 >> 20) & 0xF;
+
+  // TIM3 Slave mode
+  tim3_sms  = TIM3->SMCR & 0x7;
+
+  // TIM3 Trigger source
+  tim3_ts   = (TIM3->SMCR >> 4) & 0x7;
+
+  timer_cnt_difference = (int32_t)tim1_cnt - (int32_t)tim3_cnt;
+
+  timer_sync_ok =
+      ((tim1_cr1 & TIM_CR1_CEN) != 0) &&          // TIM1 running
+      ((tim3_cr1 & TIM_CR1_CEN) != 0) &&          // TIM3 running
+      (tim1_arr == tim3_arr) &&                   // Same period
+      (tim1_mms == 2) &&                          // TIM1 TRGO = UPDATE
+      (tim3_sms == 4) &&                          // TIM3 RESET mode
+      (tim3_ts  == 0) &&                          // TIM3 trigger = ITR0
+      (abs(timer_cnt_difference) <= 2);           // Counters aligned
+
   while (1)
   {
      /* ===== READ ADCs ===== */
