@@ -12,9 +12,9 @@ extern "C" {
 
 /* ---------------- Safety ---------------- */
 #define MINIMUM_CAPACITOR_ENERGY 450.0f // The energy value the capacitor should never go under (Joules)
-#define MAX_CHARGE_CURRENT 5.0     // max allowed charge current
-#define MAX_DISCHARGE_CURRENT 5.0 // max allowed discharge current
-#define MAX_DUTY_CYCLE 0.95f // maximum duty cycle of pwm
+#define MAX_CHARGE_CURRENT 2     // max allowed charge current
+#define MAX_DISCHARGE_CURRENT 2 // max allowed discharge current
+#define MAX_DUTY_CYCLE 0.8f // maximum duty cycle of pwm
 #define MIN_DUTY_CYCLE 0.05f // minimum duty cycle of pwm
 
 /* ---------------- Capacitor Parameters ---------------- */

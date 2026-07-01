@@ -258,8 +258,8 @@ void Process_Dynamic_Power_Tracking(float target_power, float v_cap, float measu
     float final_ccr = ccr_neutral + ccr_feedforward + pid_correction;
 
     // 4. Safety Limits
-    if (final_ccr > (TIMER_PERIOD * 0.95f)) final_ccr = (TIMER_PERIOD * 0.95f);
-    if (final_ccr < 0.0f) final_ccr = 0.0f;
+    if (final_ccr > (TIMER_PERIOD * MAX_DUTY_CYCLE)) final_ccr = (TIMER_PERIOD * MAX_DUTY_CYCLE);
+    if (final_ccr < MIN_DUTY_CYCLE) final_ccr = MIN_DUTY_CYCLE * TIMER_PERIOD;
 
     // 5. Update Hardware
     global_phase = (uint32_t)final_ccr;
@@ -437,19 +437,19 @@ int main(void)
     i_cap_protect    = i_cap_current_raw;
 
     /* ===== PARALLEL POWER-SHARING CONTROLLER ===== */
-    //PowerSharingControl(bus_voltage, i_bat_current, cap_voltage, i_cap_current, i_motor_current, bus_voltage);
+    PowerSharingControl(bus_voltage, i_bat_current, cap_voltage, i_cap_current, i_motor_current, bus_voltage);
     //the below code is for testing to make sure it can be charged and discahrged, once this is confirmed to work, comment it out and uncomment the above
-    float v_cap = cap_voltage;
-
-    // 2. Calculate the Neutral Duty Cycle (ensure 24.0 is a float to prevent integer truncation)
-    float duty_neutral = v_cap / 24.0f;
-
-    // 3. Convert the duty cycle percentage into the actual timer register value
-    uint32_t ccr_neutral = (uint32_t)(duty_neutral * 3838.0f);
-
-    // 4. Now apply your offset to actually move current!
-    // To Charge (push current into the cap)
-    TIM1->CCR1 = ccr_neutral + 75;
+//    float v_cap = cap_voltage;
+//
+//    // 2. Calculate the Neutral Duty Cycle (ensure 24.0 is a float to prevent integer truncation)
+//    float duty_neutral = v_cap / 24.0f;
+//
+//    // 3. Convert the duty cycle percentage into the actual timer register value
+//    uint32_t ccr_neutral = (uint32_t)(duty_neutral * 3838.0f);
+//
+//    // 4. Now apply your offset to actually move current!
+//    // To Charge (push current into the cap)
+//    TIM1->CCR1 = ccr_neutral + 75;
 
     /* ===== VOFA telemetry ===== */
     VOFA_UpdateData();
